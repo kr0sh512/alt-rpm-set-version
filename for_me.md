@@ -1,5 +1,9 @@
 # Notes
 
+## to read
+
+https://www.altlinux.org/Features/Specific
+
 ## Hash
 
 в данный момент используется Jenkins OAAT. Считается чуть устаревшим(check), главным аналогом является:

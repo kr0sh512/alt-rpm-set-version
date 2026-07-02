@@ -1,0 +1,304 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="2520" viewBox="0 0 1100 2520">
+<style>
+  .title { font: 700 18px sans-serif; fill: #111; }
+  .label { font: 13px sans-serif; fill: #222; }
+  .tick { font: 11px sans-serif; fill: #555; }
+  .legend { font: 12px monospace; fill: #222; }
+  .axis { stroke: #333; stroke-width: 1.2; }
+  .grid { stroke: #ddd; stroke-width: 0.8; }
+  .plot-bg { fill: #fff; stroke: #bbb; stroke-width: 1; }
+</style>
+<rect width="100%" height="100%" fill="#fff" />
+<g transform="translate(0,0)"><g class="chart">
+<text x="550" y="22" text-anchor="middle" class="title">Random bytes: 10-bit truncated hash collision rate</text>
+<rect x="72" y="42" width="878" height="320" class="plot-bg" />
+<line x1="72.00" y1="42" x2="72.00" y2="362" class="grid" />
+<text x="72.00" y="380" text-anchor="middle" class="tick">4</text>
+<line x1="218.33" y1="42" x2="218.33" y2="362" class="grid" />
+<text x="218.33" y="380" text-anchor="middle" class="tick">8</text>
+<line x1="364.67" y1="42" x2="364.67" y2="362" class="grid" />
+<text x="364.67" y="380" text-anchor="middle" class="tick">16</text>
+<line x1="511.00" y1="42" x2="511.00" y2="362" class="grid" />
+<text x="511.00" y="380" text-anchor="middle" class="tick">32</text>
+<line x1="657.33" y1="42" x2="657.33" y2="362" class="grid" />
+<text x="657.33" y="380" text-anchor="middle" class="tick">64</text>
+<line x1="803.67" y1="42" x2="803.67" y2="362" class="grid" />
+<text x="803.67" y="380" text-anchor="middle" class="tick">128</text>
+<line x1="950.00" y1="42" x2="950.00" y2="362" class="grid" />
+<text x="950.00" y="380" text-anchor="middle" class="tick">256</text>
+<line x1="72" y1="362.00" x2="950" y2="362.00" class="grid" />
+<text x="64" y="366.00" text-anchor="end" class="tick">0</text>
+<line x1="72" y1="275.98" x2="950" y2="275.98" class="grid" />
+<text x="64" y="279.98" text-anchor="end" class="tick">0.1</text>
+<line x1="72" y1="189.96" x2="950" y2="189.96" class="grid" />
+<text x="64" y="193.96" text-anchor="end" class="tick">0.2</text>
+<line x1="72" y1="103.94" x2="950" y2="103.94" class="grid" />
+<text x="64" y="107.94" text-anchor="end" class="tick">0.3</text>
+<line x1="72" y1="362" x2="950" y2="362" class="axis" />
+<line x1="72" y1="42" x2="72" y2="362" class="axis" />
+<text x="511" y="406" text-anchor="middle" class="label">input length, bytes/chars (log scale)</text>
+<text transform="translate(18,202) rotate(-90)" text-anchor="middle" class="label">median collision rate</text>
+<polyline points="72.00,42.00 218.33,43.72 364.67,49.74 511.00,47.16 657.33,47.16 803.67,53.18 950.00,47.16" fill="none" stroke="#1f77b4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="42.00" r="3" fill="#1f77b4" /><circle cx="218.33" cy="43.72" r="3" fill="#1f77b4" /><circle cx="364.67" cy="49.74" r="3" fill="#1f77b4" /><circle cx="511.00" cy="47.16" r="3" fill="#1f77b4" /><circle cx="657.33" cy="47.16" r="3" fill="#1f77b4" /><circle cx="803.67" cy="53.18" r="3" fill="#1f77b4" /><circle cx="950.00" cy="47.16" r="3" fill="#1f77b4" />
+<polyline points="72.00,51.46 218.33,53.18 364.67,48.02 511.00,50.60 657.33,61.78 803.67,48.88 950.00,52.32" fill="none" stroke="#ff7f0e" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="51.46" r="3" fill="#ff7f0e" /><circle cx="218.33" cy="53.18" r="3" fill="#ff7f0e" /><circle cx="364.67" cy="48.02" r="3" fill="#ff7f0e" /><circle cx="511.00" cy="50.60" r="3" fill="#ff7f0e" /><circle cx="657.33" cy="61.78" r="3" fill="#ff7f0e" /><circle cx="803.67" cy="48.88" r="3" fill="#ff7f0e" /><circle cx="950.00" cy="52.32" r="3" fill="#ff7f0e" />
+<polyline points="72.00,47.16 218.33,56.62 364.67,58.34 511.00,48.88 657.33,43.72 803.67,48.88 950.00,46.30" fill="none" stroke="#2ca02c" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="47.16" r="3" fill="#2ca02c" /><circle cx="218.33" cy="56.62" r="3" fill="#2ca02c" /><circle cx="364.67" cy="58.34" r="3" fill="#2ca02c" /><circle cx="511.00" cy="48.88" r="3" fill="#2ca02c" /><circle cx="657.33" cy="43.72" r="3" fill="#2ca02c" /><circle cx="803.67" cy="48.88" r="3" fill="#2ca02c" /><circle cx="950.00" cy="46.30" r="3" fill="#2ca02c" />
+<polyline points="72.00,54.04 218.33,49.74 364.67,60.06 511.00,52.32 657.33,57.48 803.67,55.76 950.00,54.04" fill="none" stroke="#d62728" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="54.04" r="3" fill="#d62728" /><circle cx="218.33" cy="49.74" r="3" fill="#d62728" /><circle cx="364.67" cy="60.06" r="3" fill="#d62728" /><circle cx="511.00" cy="52.32" r="3" fill="#d62728" /><circle cx="657.33" cy="57.48" r="3" fill="#d62728" /><circle cx="803.67" cy="55.76" r="3" fill="#d62728" /><circle cx="950.00" cy="54.04" r="3" fill="#d62728" />
+<polyline points="72.00,44.58 218.33,53.18 364.67,50.60 511.00,48.88 657.33,59.20 803.67,51.46 950.00,60.92" fill="none" stroke="#9467bd" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="44.58" r="3" fill="#9467bd" /><circle cx="218.33" cy="53.18" r="3" fill="#9467bd" /><circle cx="364.67" cy="50.60" r="3" fill="#9467bd" /><circle cx="511.00" cy="48.88" r="3" fill="#9467bd" /><circle cx="657.33" cy="59.20" r="3" fill="#9467bd" /><circle cx="803.67" cy="51.46" r="3" fill="#9467bd" /><circle cx="950.00" cy="60.92" r="3" fill="#9467bd" />
+<polyline points="72.00,51.46 218.33,48.88 364.67,48.88 511.00,48.02 657.33,52.32 803.67,49.74 950.00,55.76" fill="none" stroke="#8c564b" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="51.46" r="3" fill="#8c564b" /><circle cx="218.33" cy="48.88" r="3" fill="#8c564b" /><circle cx="364.67" cy="48.88" r="3" fill="#8c564b" /><circle cx="511.00" cy="48.02" r="3" fill="#8c564b" /><circle cx="657.33" cy="52.32" r="3" fill="#8c564b" /><circle cx="803.67" cy="49.74" r="3" fill="#8c564b" /><circle cx="950.00" cy="55.76" r="3" fill="#8c564b" />
+<rect x="976" y="48" width="12" height="12" fill="#1f77b4" />
+<text x="994" y="58" class="legend">xxh32</text>
+<rect x="976" y="66" width="12" height="12" fill="#ff7f0e" />
+<text x="994" y="76" class="legend">xxh64</text>
+<rect x="976" y="84" width="12" height="12" fill="#2ca02c" />
+<text x="994" y="94" class="legend">xxh3_64</text>
+<rect x="976" y="102" width="12" height="12" fill="#d62728" />
+<text x="994" y="112" class="legend">city32</text>
+<rect x="976" y="120" width="12" height="12" fill="#9467bd" />
+<text x="994" y="130" class="legend">city64</text>
+<rect x="976" y="138" width="12" height="12" fill="#8c564b" />
+<text x="994" y="148" class="legend">joaat</text>
+</g></g>
+<g transform="translate(0,420)"><g class="chart">
+<text x="550" y="22" text-anchor="middle" class="title">Random bytes: 12-bit truncated hash collision rate</text>
+<rect x="72" y="42" width="878" height="320" class="plot-bg" />
+<line x1="72.00" y1="42" x2="72.00" y2="362" class="grid" />
+<text x="72.00" y="380" text-anchor="middle" class="tick">4</text>
+<line x1="218.33" y1="42" x2="218.33" y2="362" class="grid" />
+<text x="218.33" y="380" text-anchor="middle" class="tick">8</text>
+<line x1="364.67" y1="42" x2="364.67" y2="362" class="grid" />
+<text x="364.67" y="380" text-anchor="middle" class="tick">16</text>
+<line x1="511.00" y1="42" x2="511.00" y2="362" class="grid" />
+<text x="511.00" y="380" text-anchor="middle" class="tick">32</text>
+<line x1="657.33" y1="42" x2="657.33" y2="362" class="grid" />
+<text x="657.33" y="380" text-anchor="middle" class="tick">64</text>
+<line x1="803.67" y1="42" x2="803.67" y2="362" class="grid" />
+<text x="803.67" y="380" text-anchor="middle" class="tick">128</text>
+<line x1="950.00" y1="42" x2="950.00" y2="362" class="grid" />
+<text x="950.00" y="380" text-anchor="middle" class="tick">256</text>
+<line x1="72" y1="362.00" x2="950" y2="362.00" class="grid" />
+<text x="64" y="366.00" text-anchor="end" class="tick">0</text>
+<line x1="72" y1="310.39" x2="950" y2="310.39" class="grid" />
+<text x="64" y="314.39" text-anchor="end" class="tick">0.02</text>
+<line x1="72" y1="258.77" x2="950" y2="258.77" class="grid" />
+<text x="64" y="262.77" text-anchor="end" class="tick">0.04</text>
+<line x1="72" y1="207.16" x2="950" y2="207.16" class="grid" />
+<text x="64" y="211.16" text-anchor="end" class="tick">0.06</text>
+<line x1="72" y1="155.55" x2="950" y2="155.55" class="grid" />
+<text x="64" y="159.55" text-anchor="end" class="tick">0.08</text>
+<line x1="72" y1="103.94" x2="950" y2="103.94" class="grid" />
+<text x="64" y="107.94" text-anchor="end" class="tick">0.1</text>
+<line x1="72" y1="52.32" x2="950" y2="52.32" class="grid" />
+<text x="64" y="56.32" text-anchor="end" class="tick">0.12</text>
+<line x1="72" y1="362" x2="950" y2="362" class="axis" />
+<line x1="72" y1="42" x2="72" y2="362" class="axis" />
+<text x="511" y="406" text-anchor="middle" class="label">input length, bytes/chars (log scale)</text>
+<text transform="translate(18,202) rotate(-90)" text-anchor="middle" class="label">median collision rate</text>
+<polyline points="72.00,49.74 218.33,88.45 364.67,80.71 511.00,62.65 657.33,54.90 803.67,72.97 950.00,72.97" fill="none" stroke="#1f77b4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="49.74" r="3" fill="#1f77b4" /><circle cx="218.33" cy="88.45" r="3" fill="#1f77b4" /><circle cx="364.67" cy="80.71" r="3" fill="#1f77b4" /><circle cx="511.00" cy="62.65" r="3" fill="#1f77b4" /><circle cx="657.33" cy="54.90" r="3" fill="#1f77b4" /><circle cx="803.67" cy="72.97" r="3" fill="#1f77b4" /><circle cx="950.00" cy="72.97" r="3" fill="#1f77b4" />
+<polyline points="72.00,72.97 218.33,80.71 364.67,70.39 511.00,57.48 657.33,75.55 803.67,54.90 950.00,91.03" fill="none" stroke="#ff7f0e" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="72.97" r="3" fill="#ff7f0e" /><circle cx="218.33" cy="80.71" r="3" fill="#ff7f0e" /><circle cx="364.67" cy="70.39" r="3" fill="#ff7f0e" /><circle cx="511.00" cy="57.48" r="3" fill="#ff7f0e" /><circle cx="657.33" cy="75.55" r="3" fill="#ff7f0e" /><circle cx="803.67" cy="54.90" r="3" fill="#ff7f0e" /><circle cx="950.00" cy="91.03" r="3" fill="#ff7f0e" />
+<polyline points="72.00,49.74 218.33,78.13 364.67,85.87 511.00,83.29 657.33,67.81 803.67,72.97 950.00,57.48" fill="none" stroke="#2ca02c" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="49.74" r="3" fill="#2ca02c" /><circle cx="218.33" cy="78.13" r="3" fill="#2ca02c" /><circle cx="364.67" cy="85.87" r="3" fill="#2ca02c" /><circle cx="511.00" cy="83.29" r="3" fill="#2ca02c" /><circle cx="657.33" cy="67.81" r="3" fill="#2ca02c" /><circle cx="803.67" cy="72.97" r="3" fill="#2ca02c" /><circle cx="950.00" cy="57.48" r="3" fill="#2ca02c" />
+<polyline points="72.00,78.13 218.33,67.81 364.67,83.29 511.00,72.97 657.33,72.97 803.67,83.29 950.00,96.19" fill="none" stroke="#d62728" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="78.13" r="3" fill="#d62728" /><circle cx="218.33" cy="67.81" r="3" fill="#d62728" /><circle cx="364.67" cy="83.29" r="3" fill="#d62728" /><circle cx="511.00" cy="72.97" r="3" fill="#d62728" /><circle cx="657.33" cy="72.97" r="3" fill="#d62728" /><circle cx="803.67" cy="83.29" r="3" fill="#d62728" /><circle cx="950.00" cy="96.19" r="3" fill="#d62728" />
+<polyline points="72.00,75.55 218.33,54.90 364.67,103.94 511.00,70.39 657.33,75.55 803.67,52.32 950.00,103.94" fill="none" stroke="#9467bd" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="75.55" r="3" fill="#9467bd" /><circle cx="218.33" cy="54.90" r="3" fill="#9467bd" /><circle cx="364.67" cy="103.94" r="3" fill="#9467bd" /><circle cx="511.00" cy="70.39" r="3" fill="#9467bd" /><circle cx="657.33" cy="75.55" r="3" fill="#9467bd" /><circle cx="803.67" cy="52.32" r="3" fill="#9467bd" /><circle cx="950.00" cy="103.94" r="3" fill="#9467bd" />
+<polyline points="72.00,80.71 218.33,42.00 364.67,60.06 511.00,78.13 657.33,85.87 803.67,67.81 950.00,52.32" fill="none" stroke="#8c564b" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="80.71" r="3" fill="#8c564b" /><circle cx="218.33" cy="42.00" r="3" fill="#8c564b" /><circle cx="364.67" cy="60.06" r="3" fill="#8c564b" /><circle cx="511.00" cy="78.13" r="3" fill="#8c564b" /><circle cx="657.33" cy="85.87" r="3" fill="#8c564b" /><circle cx="803.67" cy="67.81" r="3" fill="#8c564b" /><circle cx="950.00" cy="52.32" r="3" fill="#8c564b" />
+<rect x="976" y="48" width="12" height="12" fill="#1f77b4" />
+<text x="994" y="58" class="legend">xxh32</text>
+<rect x="976" y="66" width="12" height="12" fill="#ff7f0e" />
+<text x="994" y="76" class="legend">xxh64</text>
+<rect x="976" y="84" width="12" height="12" fill="#2ca02c" />
+<text x="994" y="94" class="legend">xxh3_64</text>
+<rect x="976" y="102" width="12" height="12" fill="#d62728" />
+<text x="994" y="112" class="legend">city32</text>
+<rect x="976" y="120" width="12" height="12" fill="#9467bd" />
+<text x="994" y="130" class="legend">city64</text>
+<rect x="976" y="138" width="12" height="12" fill="#8c564b" />
+<text x="994" y="148" class="legend">joaat</text>
+</g></g>
+<g transform="translate(0,840)"><g class="chart">
+<text x="550" y="22" text-anchor="middle" class="title">Random bytes: 16-bit truncated hash collision rate</text>
+<rect x="72" y="42" width="878" height="320" class="plot-bg" />
+<line x1="72.00" y1="42" x2="72.00" y2="362" class="grid" />
+<text x="72.00" y="380" text-anchor="middle" class="tick">4</text>
+<line x1="218.33" y1="42" x2="218.33" y2="362" class="grid" />
+<text x="218.33" y="380" text-anchor="middle" class="tick">8</text>
+<line x1="364.67" y1="42" x2="364.67" y2="362" class="grid" />
+<text x="364.67" y="380" text-anchor="middle" class="tick">16</text>
+<line x1="511.00" y1="42" x2="511.00" y2="362" class="grid" />
+<text x="511.00" y="380" text-anchor="middle" class="tick">32</text>
+<line x1="657.33" y1="42" x2="657.33" y2="362" class="grid" />
+<text x="657.33" y="380" text-anchor="middle" class="tick">64</text>
+<line x1="803.67" y1="42" x2="803.67" y2="362" class="grid" />
+<text x="803.67" y="380" text-anchor="middle" class="tick">128</text>
+<line x1="950.00" y1="42" x2="950.00" y2="362" class="grid" />
+<text x="950.00" y="380" text-anchor="middle" class="tick">256</text>
+<line x1="72" y1="362.00" x2="950" y2="362.00" class="grid" />
+<text x="64" y="366.00" text-anchor="end" class="tick">0</text>
+<line x1="72" y1="308.67" x2="950" y2="308.67" class="grid" />
+<text x="64" y="312.67" text-anchor="end" class="tick">2.00e-03</text>
+<line x1="72" y1="255.33" x2="950" y2="255.33" class="grid" />
+<text x="64" y="259.33" text-anchor="end" class="tick">4.00e-03</text>
+<line x1="72" y1="202.00" x2="950" y2="202.00" class="grid" />
+<text x="64" y="206.00" text-anchor="end" class="tick">6.00e-03</text>
+<line x1="72" y1="148.67" x2="950" y2="148.67" class="grid" />
+<text x="64" y="152.67" text-anchor="end" class="tick">8.00e-03</text>
+<line x1="72" y1="95.33" x2="950" y2="95.33" class="grid" />
+<text x="64" y="99.33" text-anchor="end" class="tick">0.01</text>
+<line x1="72" y1="42.00" x2="950" y2="42.00" class="grid" />
+<text x="64" y="46.00" text-anchor="end" class="tick">0.012</text>
+<line x1="72" y1="362" x2="950" y2="362" class="axis" />
+<line x1="72" y1="42" x2="72" y2="362" class="axis" />
+<text x="511" y="406" text-anchor="middle" class="label">input length, bytes/chars (log scale)</text>
+<text transform="translate(18,202) rotate(-90)" text-anchor="middle" class="label">median collision rate</text>
+<polyline points="72.00,148.67 218.33,202.00 364.67,202.00 511.00,175.33 657.33,95.33 803.67,202.00 950.00,255.33" fill="none" stroke="#1f77b4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="148.67" r="3" fill="#1f77b4" /><circle cx="218.33" cy="202.00" r="3" fill="#1f77b4" /><circle cx="364.67" cy="202.00" r="3" fill="#1f77b4" /><circle cx="511.00" cy="175.33" r="3" fill="#1f77b4" /><circle cx="657.33" cy="95.33" r="3" fill="#1f77b4" /><circle cx="803.67" cy="202.00" r="3" fill="#1f77b4" /><circle cx="950.00" cy="255.33" r="3" fill="#1f77b4" />
+<polyline points="72.00,122.00 218.33,95.33 364.67,175.33 511.00,95.33 657.33,148.67 803.67,122.00 950.00,175.33" fill="none" stroke="#ff7f0e" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="122.00" r="3" fill="#ff7f0e" /><circle cx="218.33" cy="95.33" r="3" fill="#ff7f0e" /><circle cx="364.67" cy="175.33" r="3" fill="#ff7f0e" /><circle cx="511.00" cy="95.33" r="3" fill="#ff7f0e" /><circle cx="657.33" cy="148.67" r="3" fill="#ff7f0e" /><circle cx="803.67" cy="122.00" r="3" fill="#ff7f0e" /><circle cx="950.00" cy="175.33" r="3" fill="#ff7f0e" />
+<polyline points="72.00,175.33 218.33,175.33 364.67,148.67 511.00,148.67 657.33,202.00 803.67,175.33 950.00,122.00" fill="none" stroke="#2ca02c" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="175.33" r="3" fill="#2ca02c" /><circle cx="218.33" cy="175.33" r="3" fill="#2ca02c" /><circle cx="364.67" cy="148.67" r="3" fill="#2ca02c" /><circle cx="511.00" cy="148.67" r="3" fill="#2ca02c" /><circle cx="657.33" cy="202.00" r="3" fill="#2ca02c" /><circle cx="803.67" cy="175.33" r="3" fill="#2ca02c" /><circle cx="950.00" cy="122.00" r="3" fill="#2ca02c" />
+<polyline points="72.00,202.00 218.33,148.67 364.67,202.00 511.00,122.00 657.33,255.33 803.67,175.33 950.00,202.00" fill="none" stroke="#d62728" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="202.00" r="3" fill="#d62728" /><circle cx="218.33" cy="148.67" r="3" fill="#d62728" /><circle cx="364.67" cy="202.00" r="3" fill="#d62728" /><circle cx="511.00" cy="122.00" r="3" fill="#d62728" /><circle cx="657.33" cy="255.33" r="3" fill="#d62728" /><circle cx="803.67" cy="175.33" r="3" fill="#d62728" /><circle cx="950.00" cy="202.00" r="3" fill="#d62728" />
+<polyline points="72.00,95.33 218.33,148.67 364.67,202.00 511.00,148.67 657.33,42.00 803.67,148.67 950.00,228.67" fill="none" stroke="#9467bd" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="95.33" r="3" fill="#9467bd" /><circle cx="218.33" cy="148.67" r="3" fill="#9467bd" /><circle cx="364.67" cy="202.00" r="3" fill="#9467bd" /><circle cx="511.00" cy="148.67" r="3" fill="#9467bd" /><circle cx="657.33" cy="42.00" r="3" fill="#9467bd" /><circle cx="803.67" cy="148.67" r="3" fill="#9467bd" /><circle cx="950.00" cy="228.67" r="3" fill="#9467bd" />
+<polyline points="72.00,148.67 218.33,148.67 364.67,122.00 511.00,175.33 657.33,175.33 803.67,255.33 950.00,175.33" fill="none" stroke="#8c564b" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="148.67" r="3" fill="#8c564b" /><circle cx="218.33" cy="148.67" r="3" fill="#8c564b" /><circle cx="364.67" cy="122.00" r="3" fill="#8c564b" /><circle cx="511.00" cy="175.33" r="3" fill="#8c564b" /><circle cx="657.33" cy="175.33" r="3" fill="#8c564b" /><circle cx="803.67" cy="255.33" r="3" fill="#8c564b" /><circle cx="950.00" cy="175.33" r="3" fill="#8c564b" />
+<rect x="976" y="48" width="12" height="12" fill="#1f77b4" />
+<text x="994" y="58" class="legend">xxh32</text>
+<rect x="976" y="66" width="12" height="12" fill="#ff7f0e" />
+<text x="994" y="76" class="legend">xxh64</text>
+<rect x="976" y="84" width="12" height="12" fill="#2ca02c" />
+<text x="994" y="94" class="legend">xxh3_64</text>
+<rect x="976" y="102" width="12" height="12" fill="#d62728" />
+<text x="994" y="112" class="legend">city32</text>
+<rect x="976" y="120" width="12" height="12" fill="#9467bd" />
+<text x="994" y="130" class="legend">city64</text>
+<rect x="976" y="138" width="12" height="12" fill="#8c564b" />
+<text x="994" y="148" class="legend">joaat</text>
+</g></g>
+<g transform="translate(0,1260)"><g class="chart">
+<text x="550" y="22" text-anchor="middle" class="title">Random bytes: 20-bit truncated hash collision rate</text>
+<rect x="72" y="42" width="878" height="320" class="plot-bg" />
+<line x1="72.00" y1="42" x2="72.00" y2="362" class="grid" />
+<text x="72.00" y="380" text-anchor="middle" class="tick">4</text>
+<line x1="218.33" y1="42" x2="218.33" y2="362" class="grid" />
+<text x="218.33" y="380" text-anchor="middle" class="tick">8</text>
+<line x1="364.67" y1="42" x2="364.67" y2="362" class="grid" />
+<text x="364.67" y="380" text-anchor="middle" class="tick">16</text>
+<line x1="511.00" y1="42" x2="511.00" y2="362" class="grid" />
+<text x="511.00" y="380" text-anchor="middle" class="tick">32</text>
+<line x1="657.33" y1="42" x2="657.33" y2="362" class="grid" />
+<text x="657.33" y="380" text-anchor="middle" class="tick">64</text>
+<line x1="803.67" y1="42" x2="803.67" y2="362" class="grid" />
+<text x="803.67" y="380" text-anchor="middle" class="tick">128</text>
+<line x1="950.00" y1="42" x2="950.00" y2="362" class="grid" />
+<text x="950.00" y="380" text-anchor="middle" class="tick">256</text>
+<line x1="72" y1="362.00" x2="950" y2="362.00" class="grid" />
+<text x="64" y="366.00" text-anchor="end" class="tick">0</text>
+<line x1="72" y1="298.00" x2="950" y2="298.00" class="grid" />
+<text x="64" y="302.00" text-anchor="end" class="tick">2.00e-04</text>
+<line x1="72" y1="234.00" x2="950" y2="234.00" class="grid" />
+<text x="64" y="238.00" text-anchor="end" class="tick">4.00e-04</text>
+<line x1="72" y1="170.00" x2="950" y2="170.00" class="grid" />
+<text x="64" y="174.00" text-anchor="end" class="tick">6.00e-04</text>
+<line x1="72" y1="106.00" x2="950" y2="106.00" class="grid" />
+<text x="64" y="110.00" text-anchor="end" class="tick">8.00e-04</text>
+<line x1="72" y1="42.00" x2="950" y2="42.00" class="grid" />
+<text x="64" y="46.00" text-anchor="end" class="tick">1.00e-03</text>
+<line x1="72" y1="362" x2="950" y2="362" class="axis" />
+<line x1="72" y1="42" x2="72" y2="362" class="axis" />
+<text x="511" y="406" text-anchor="middle" class="label">input length, bytes/chars (log scale)</text>
+<text transform="translate(18,202) rotate(-90)" text-anchor="middle" class="label">median collision rate</text>
+<polyline points="72.00,362.00 218.33,42.00 364.67,362.00 511.00,362.00 657.33,362.00 803.67,42.00 950.00,362.00" fill="none" stroke="#1f77b4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="362.00" r="3" fill="#1f77b4" /><circle cx="218.33" cy="42.00" r="3" fill="#1f77b4" /><circle cx="364.67" cy="362.00" r="3" fill="#1f77b4" /><circle cx="511.00" cy="362.00" r="3" fill="#1f77b4" /><circle cx="657.33" cy="362.00" r="3" fill="#1f77b4" /><circle cx="803.67" cy="42.00" r="3" fill="#1f77b4" /><circle cx="950.00" cy="362.00" r="3" fill="#1f77b4" />
+<polyline points="72.00,42.00 218.33,362.00 364.67,362.00 511.00,362.00 657.33,362.00 803.67,362.00 950.00,42.00" fill="none" stroke="#ff7f0e" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="42.00" r="3" fill="#ff7f0e" /><circle cx="218.33" cy="362.00" r="3" fill="#ff7f0e" /><circle cx="364.67" cy="362.00" r="3" fill="#ff7f0e" /><circle cx="511.00" cy="362.00" r="3" fill="#ff7f0e" /><circle cx="657.33" cy="362.00" r="3" fill="#ff7f0e" /><circle cx="803.67" cy="362.00" r="3" fill="#ff7f0e" /><circle cx="950.00" cy="42.00" r="3" fill="#ff7f0e" />
+<polyline points="72.00,362.00 218.33,362.00 364.67,362.00 511.00,42.00 657.33,362.00 803.67,362.00 950.00,42.00" fill="none" stroke="#2ca02c" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="362.00" r="3" fill="#2ca02c" /><circle cx="218.33" cy="362.00" r="3" fill="#2ca02c" /><circle cx="364.67" cy="362.00" r="3" fill="#2ca02c" /><circle cx="511.00" cy="42.00" r="3" fill="#2ca02c" /><circle cx="657.33" cy="362.00" r="3" fill="#2ca02c" /><circle cx="803.67" cy="362.00" r="3" fill="#2ca02c" /><circle cx="950.00" cy="42.00" r="3" fill="#2ca02c" />
+<polyline points="72.00,362.00 218.33,362.00 364.67,362.00 511.00,362.00 657.33,42.00 803.67,362.00 950.00,362.00" fill="none" stroke="#d62728" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="362.00" r="3" fill="#d62728" /><circle cx="218.33" cy="362.00" r="3" fill="#d62728" /><circle cx="364.67" cy="362.00" r="3" fill="#d62728" /><circle cx="511.00" cy="362.00" r="3" fill="#d62728" /><circle cx="657.33" cy="42.00" r="3" fill="#d62728" /><circle cx="803.67" cy="362.00" r="3" fill="#d62728" /><circle cx="950.00" cy="362.00" r="3" fill="#d62728" />
+<polyline points="72.00,42.00 218.33,362.00 364.67,42.00 511.00,362.00 657.33,362.00 803.67,362.00 950.00,362.00" fill="none" stroke="#9467bd" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="42.00" r="3" fill="#9467bd" /><circle cx="218.33" cy="362.00" r="3" fill="#9467bd" /><circle cx="364.67" cy="42.00" r="3" fill="#9467bd" /><circle cx="511.00" cy="362.00" r="3" fill="#9467bd" /><circle cx="657.33" cy="362.00" r="3" fill="#9467bd" /><circle cx="803.67" cy="362.00" r="3" fill="#9467bd" /><circle cx="950.00" cy="362.00" r="3" fill="#9467bd" />
+<polyline points="72.00,362.00 218.33,362.00 364.67,42.00 511.00,362.00 657.33,362.00 803.67,362.00 950.00,42.00" fill="none" stroke="#8c564b" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="362.00" r="3" fill="#8c564b" /><circle cx="218.33" cy="362.00" r="3" fill="#8c564b" /><circle cx="364.67" cy="42.00" r="3" fill="#8c564b" /><circle cx="511.00" cy="362.00" r="3" fill="#8c564b" /><circle cx="657.33" cy="362.00" r="3" fill="#8c564b" /><circle cx="803.67" cy="362.00" r="3" fill="#8c564b" /><circle cx="950.00" cy="42.00" r="3" fill="#8c564b" />
+<rect x="976" y="48" width="12" height="12" fill="#1f77b4" />
+<text x="994" y="58" class="legend">xxh32</text>
+<rect x="976" y="66" width="12" height="12" fill="#ff7f0e" />
+<text x="994" y="76" class="legend">xxh64</text>
+<rect x="976" y="84" width="12" height="12" fill="#2ca02c" />
+<text x="994" y="94" class="legend">xxh3_64</text>
+<rect x="976" y="102" width="12" height="12" fill="#d62728" />
+<text x="994" y="112" class="legend">city32</text>
+<rect x="976" y="120" width="12" height="12" fill="#9467bd" />
+<text x="994" y="130" class="legend">city64</text>
+<rect x="976" y="138" width="12" height="12" fill="#8c564b" />
+<text x="994" y="148" class="legend">joaat</text>
+</g></g>
+<g transform="translate(0,1680)"><g class="chart">
+<text x="550" y="22" text-anchor="middle" class="title">Random bytes: 24-bit truncated hash collision rate</text>
+<rect x="72" y="42" width="878" height="320" class="plot-bg" />
+<line x1="72.00" y1="42" x2="72.00" y2="362" class="grid" />
+<text x="72.00" y="380" text-anchor="middle" class="tick">4</text>
+<line x1="218.33" y1="42" x2="218.33" y2="362" class="grid" />
+<text x="218.33" y="380" text-anchor="middle" class="tick">8</text>
+<line x1="364.67" y1="42" x2="364.67" y2="362" class="grid" />
+<text x="364.67" y="380" text-anchor="middle" class="tick">16</text>
+<line x1="511.00" y1="42" x2="511.00" y2="362" class="grid" />
+<text x="511.00" y="380" text-anchor="middle" class="tick">32</text>
+<line x1="657.33" y1="42" x2="657.33" y2="362" class="grid" />
+<text x="657.33" y="380" text-anchor="middle" class="tick">64</text>
+<line x1="803.67" y1="42" x2="803.67" y2="362" class="grid" />
+<text x="803.67" y="380" text-anchor="middle" class="tick">128</text>
+<line x1="950.00" y1="42" x2="950.00" y2="362" class="grid" />
+<text x="950.00" y="380" text-anchor="middle" class="tick">256</text>
+<line x1="72" y1="202.00" x2="950" y2="202.00" class="grid" />
+<text x="64" y="206.00" text-anchor="end" class="tick">0</text>
+<line x1="72" y1="362" x2="950" y2="362" class="axis" />
+<line x1="72" y1="42" x2="72" y2="362" class="axis" />
+<text x="511" y="406" text-anchor="middle" class="label">input length, bytes/chars (log scale)</text>
+<text transform="translate(18,202) rotate(-90)" text-anchor="middle" class="label">median collision rate</text>
+<polyline points="72.00,202.00 218.33,202.00 364.67,202.00 511.00,202.00 657.33,202.00 803.67,202.00 950.00,202.00" fill="none" stroke="#1f77b4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="202.00" r="3" fill="#1f77b4" /><circle cx="218.33" cy="202.00" r="3" fill="#1f77b4" /><circle cx="364.67" cy="202.00" r="3" fill="#1f77b4" /><circle cx="511.00" cy="202.00" r="3" fill="#1f77b4" /><circle cx="657.33" cy="202.00" r="3" fill="#1f77b4" /><circle cx="803.67" cy="202.00" r="3" fill="#1f77b4" /><circle cx="950.00" cy="202.00" r="3" fill="#1f77b4" />
+<polyline points="72.00,202.00 218.33,202.00 364.67,202.00 511.00,202.00 657.33,202.00 803.67,202.00 950.00,202.00" fill="none" stroke="#ff7f0e" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="202.00" r="3" fill="#ff7f0e" /><circle cx="218.33" cy="202.00" r="3" fill="#ff7f0e" /><circle cx="364.67" cy="202.00" r="3" fill="#ff7f0e" /><circle cx="511.00" cy="202.00" r="3" fill="#ff7f0e" /><circle cx="657.33" cy="202.00" r="3" fill="#ff7f0e" /><circle cx="803.67" cy="202.00" r="3" fill="#ff7f0e" /><circle cx="950.00" cy="202.00" r="3" fill="#ff7f0e" />
+<polyline points="72.00,202.00 218.33,202.00 364.67,202.00 511.00,202.00 657.33,202.00 803.67,202.00 950.00,202.00" fill="none" stroke="#2ca02c" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="202.00" r="3" fill="#2ca02c" /><circle cx="218.33" cy="202.00" r="3" fill="#2ca02c" /><circle cx="364.67" cy="202.00" r="3" fill="#2ca02c" /><circle cx="511.00" cy="202.00" r="3" fill="#2ca02c" /><circle cx="657.33" cy="202.00" r="3" fill="#2ca02c" /><circle cx="803.67" cy="202.00" r="3" fill="#2ca02c" /><circle cx="950.00" cy="202.00" r="3" fill="#2ca02c" />
+<polyline points="72.00,202.00 218.33,202.00 364.67,202.00 511.00,202.00 657.33,202.00 803.67,202.00 950.00,202.00" fill="none" stroke="#d62728" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="202.00" r="3" fill="#d62728" /><circle cx="218.33" cy="202.00" r="3" fill="#d62728" /><circle cx="364.67" cy="202.00" r="3" fill="#d62728" /><circle cx="511.00" cy="202.00" r="3" fill="#d62728" /><circle cx="657.33" cy="202.00" r="3" fill="#d62728" /><circle cx="803.67" cy="202.00" r="3" fill="#d62728" /><circle cx="950.00" cy="202.00" r="3" fill="#d62728" />
+<polyline points="72.00,202.00 218.33,202.00 364.67,202.00 511.00,202.00 657.33,202.00 803.67,202.00 950.00,202.00" fill="none" stroke="#9467bd" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="202.00" r="3" fill="#9467bd" /><circle cx="218.33" cy="202.00" r="3" fill="#9467bd" /><circle cx="364.67" cy="202.00" r="3" fill="#9467bd" /><circle cx="511.00" cy="202.00" r="3" fill="#9467bd" /><circle cx="657.33" cy="202.00" r="3" fill="#9467bd" /><circle cx="803.67" cy="202.00" r="3" fill="#9467bd" /><circle cx="950.00" cy="202.00" r="3" fill="#9467bd" />
+<polyline points="72.00,202.00 218.33,202.00 364.67,202.00 511.00,202.00 657.33,202.00 803.67,202.00 950.00,202.00" fill="none" stroke="#8c564b" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="202.00" r="3" fill="#8c564b" /><circle cx="218.33" cy="202.00" r="3" fill="#8c564b" /><circle cx="364.67" cy="202.00" r="3" fill="#8c564b" /><circle cx="511.00" cy="202.00" r="3" fill="#8c564b" /><circle cx="657.33" cy="202.00" r="3" fill="#8c564b" /><circle cx="803.67" cy="202.00" r="3" fill="#8c564b" /><circle cx="950.00" cy="202.00" r="3" fill="#8c564b" />
+<rect x="976" y="48" width="12" height="12" fill="#1f77b4" />
+<text x="994" y="58" class="legend">xxh32</text>
+<rect x="976" y="66" width="12" height="12" fill="#ff7f0e" />
+<text x="994" y="76" class="legend">xxh64</text>
+<rect x="976" y="84" width="12" height="12" fill="#2ca02c" />
+<text x="994" y="94" class="legend">xxh3_64</text>
+<rect x="976" y="102" width="12" height="12" fill="#d62728" />
+<text x="994" y="112" class="legend">city32</text>
+<rect x="976" y="120" width="12" height="12" fill="#9467bd" />
+<text x="994" y="130" class="legend">city64</text>
+<rect x="976" y="138" width="12" height="12" fill="#8c564b" />
+<text x="994" y="148" class="legend">joaat</text>
+</g></g>
+<g transform="translate(0,2100)"><g class="chart">
+<text x="550" y="22" text-anchor="middle" class="title">Random bytes: 32-bit truncated hash collision rate</text>
+<rect x="72" y="42" width="878" height="320" class="plot-bg" />
+<line x1="72.00" y1="42" x2="72.00" y2="362" class="grid" />
+<text x="72.00" y="380" text-anchor="middle" class="tick">4</text>
+<line x1="218.33" y1="42" x2="218.33" y2="362" class="grid" />
+<text x="218.33" y="380" text-anchor="middle" class="tick">8</text>
+<line x1="364.67" y1="42" x2="364.67" y2="362" class="grid" />
+<text x="364.67" y="380" text-anchor="middle" class="tick">16</text>
+<line x1="511.00" y1="42" x2="511.00" y2="362" class="grid" />
+<text x="511.00" y="380" text-anchor="middle" class="tick">32</text>
+<line x1="657.33" y1="42" x2="657.33" y2="362" class="grid" />
+<text x="657.33" y="380" text-anchor="middle" class="tick">64</text>
+<line x1="803.67" y1="42" x2="803.67" y2="362" class="grid" />
+<text x="803.67" y="380" text-anchor="middle" class="tick">128</text>
+<line x1="950.00" y1="42" x2="950.00" y2="362" class="grid" />
+<text x="950.00" y="380" text-anchor="middle" class="tick">256</text>
+<line x1="72" y1="202.00" x2="950" y2="202.00" class="grid" />
+<text x="64" y="206.00" text-anchor="end" class="tick">0</text>
+<line x1="72" y1="362" x2="950" y2="362" class="axis" />
+<line x1="72" y1="42" x2="72" y2="362" class="axis" />
+<text x="511" y="406" text-anchor="middle" class="label">input length, bytes/chars (log scale)</text>
+<text transform="translate(18,202) rotate(-90)" text-anchor="middle" class="label">median collision rate</text>
+<polyline points="72.00,202.00 218.33,202.00 364.67,202.00 511.00,202.00 657.33,202.00 803.67,202.00 950.00,202.00" fill="none" stroke="#1f77b4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="202.00" r="3" fill="#1f77b4" /><circle cx="218.33" cy="202.00" r="3" fill="#1f77b4" /><circle cx="364.67" cy="202.00" r="3" fill="#1f77b4" /><circle cx="511.00" cy="202.00" r="3" fill="#1f77b4" /><circle cx="657.33" cy="202.00" r="3" fill="#1f77b4" /><circle cx="803.67" cy="202.00" r="3" fill="#1f77b4" /><circle cx="950.00" cy="202.00" r="3" fill="#1f77b4" />
+<polyline points="72.00,202.00 218.33,202.00 364.67,202.00 511.00,202.00 657.33,202.00 803.67,202.00 950.00,202.00" fill="none" stroke="#ff7f0e" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="202.00" r="3" fill="#ff7f0e" /><circle cx="218.33" cy="202.00" r="3" fill="#ff7f0e" /><circle cx="364.67" cy="202.00" r="3" fill="#ff7f0e" /><circle cx="511.00" cy="202.00" r="3" fill="#ff7f0e" /><circle cx="657.33" cy="202.00" r="3" fill="#ff7f0e" /><circle cx="803.67" cy="202.00" r="3" fill="#ff7f0e" /><circle cx="950.00" cy="202.00" r="3" fill="#ff7f0e" />
+<polyline points="72.00,202.00 218.33,202.00 364.67,202.00 511.00,202.00 657.33,202.00 803.67,202.00 950.00,202.00" fill="none" stroke="#2ca02c" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="202.00" r="3" fill="#2ca02c" /><circle cx="218.33" cy="202.00" r="3" fill="#2ca02c" /><circle cx="364.67" cy="202.00" r="3" fill="#2ca02c" /><circle cx="511.00" cy="202.00" r="3" fill="#2ca02c" /><circle cx="657.33" cy="202.00" r="3" fill="#2ca02c" /><circle cx="803.67" cy="202.00" r="3" fill="#2ca02c" /><circle cx="950.00" cy="202.00" r="3" fill="#2ca02c" />
+<polyline points="72.00,202.00 218.33,202.00 364.67,202.00 511.00,202.00 657.33,202.00 803.67,202.00 950.00,202.00" fill="none" stroke="#d62728" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="202.00" r="3" fill="#d62728" /><circle cx="218.33" cy="202.00" r="3" fill="#d62728" /><circle cx="364.67" cy="202.00" r="3" fill="#d62728" /><circle cx="511.00" cy="202.00" r="3" fill="#d62728" /><circle cx="657.33" cy="202.00" r="3" fill="#d62728" /><circle cx="803.67" cy="202.00" r="3" fill="#d62728" /><circle cx="950.00" cy="202.00" r="3" fill="#d62728" />
+<polyline points="72.00,202.00 218.33,202.00 364.67,202.00 511.00,202.00 657.33,202.00 803.67,202.00 950.00,202.00" fill="none" stroke="#9467bd" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="202.00" r="3" fill="#9467bd" /><circle cx="218.33" cy="202.00" r="3" fill="#9467bd" /><circle cx="364.67" cy="202.00" r="3" fill="#9467bd" /><circle cx="511.00" cy="202.00" r="3" fill="#9467bd" /><circle cx="657.33" cy="202.00" r="3" fill="#9467bd" /><circle cx="803.67" cy="202.00" r="3" fill="#9467bd" /><circle cx="950.00" cy="202.00" r="3" fill="#9467bd" />
+<polyline points="72.00,202.00 218.33,202.00 364.67,202.00 511.00,202.00 657.33,202.00 803.67,202.00 950.00,202.00" fill="none" stroke="#8c564b" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /><circle cx="72.00" cy="202.00" r="3" fill="#8c564b" /><circle cx="218.33" cy="202.00" r="3" fill="#8c564b" /><circle cx="364.67" cy="202.00" r="3" fill="#8c564b" /><circle cx="511.00" cy="202.00" r="3" fill="#8c564b" /><circle cx="657.33" cy="202.00" r="3" fill="#8c564b" /><circle cx="803.67" cy="202.00" r="3" fill="#8c564b" /><circle cx="950.00" cy="202.00" r="3" fill="#8c564b" />
+<rect x="976" y="48" width="12" height="12" fill="#1f77b4" />
+<text x="994" y="58" class="legend">xxh32</text>
+<rect x="976" y="66" width="12" height="12" fill="#ff7f0e" />
+<text x="994" y="76" class="legend">xxh64</text>
+<rect x="976" y="84" width="12" height="12" fill="#2ca02c" />
+<text x="994" y="94" class="legend">xxh3_64</text>
+<rect x="976" y="102" width="12" height="12" fill="#d62728" />
+<text x="994" y="112" class="legend">city32</text>
+<rect x="976" y="120" width="12" height="12" fill="#9467bd" />
+<text x="994" y="130" class="legend">city64</text>
+<rect x="976" y="138" width="12" height="12" fill="#8c564b" />
+<text x="994" y="148" class="legend">joaat</text>
+</g></g>
+</svg>
