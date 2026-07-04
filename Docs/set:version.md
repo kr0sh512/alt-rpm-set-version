@@ -329,6 +329,82 @@ ge = 0;
 v2++;
 ```
 
+## `SEFT_TEST` флаг
+
+При выставленном `SEFT_TEST` флаге происходит следующее:
+
+1. Явно отклчючается `NDEBUG` для работы `assert()`
+2. Компилируются `test_*` функции
+3. Компилируется `main()`, запускающая все `test_*` функции
+
+### `test_base62()`
+
+Проверяет работу функций:
+
+```c
+encode_base62()
+decode_base62()
+```
+
+### `test_golomb()`
+
+Проверяет работу функций:
+
+```c
+encode_golomb()
+decode_golomb()
+```
+
+### `test_word_table()`
+
+WIP
+
+### `test_base62_golomb()`
+
+Проверяет оптимизированный комбинированный декодер `decode_base62_golomb()`, сравнивая с эталонными:
+
+```c
+decode_base62()
+decode_golomb()
+```
+
+### `test_delta()`
+
+Проверяет работу функций:
+
+```c
+encode_delta()
+decode_delta()
+```
+
+### `test_set()`
+
+Проверяет полный encode/decode pipeline для множества чисел. Используемый `bpp = 16`.
+
+#### Примечание о `encode_set()`
+
+Внутри `encode_set()` есть строки:
+
+```c
+#ifdef SELF_TEST
+  decode_delta(c, v);
+#endif
+```
+
+это необходимо, т.к. далее в функции `test_set()` сравниваются изначальный и "после pipeline" массивы.
+
+### `test_api()`
+
+Проверяет публичный API:
+
+```c
+set_new()
+set_add()
+set_fini()
+rpmsetcmp()
+set_free()
+```
+
 ## Комментарии
 
 ## additional
