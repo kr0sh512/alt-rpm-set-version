@@ -174,7 +174,6 @@ def decode_golomb(bits: List[int], Mshift: int) -> List[int]:
             if i < len(bits):
                 if bits[i] == 1:
                     r |= 1 << j
-            else:
                 i += 1
 
         delta_value = (q << Mshift) | r
@@ -360,28 +359,3 @@ def set_fini(set: Set, bpp: int) -> str | None:
     encoded_string = encode_set(hash_values, bpp)
 
     return encoded_string
-
-
-if __name__ == "__main__":
-    # Example usage
-    my_set = set_new()
-    set_add(my_set, "example_label_1")
-    set_add(my_set, "example_label_2")
-    result = set_fini(my_set, 8)
-    print(result)
-    set_free(my_set)
-
-    # example with comparison
-    set1 = set_new()
-    set_add(set1, "label1")
-    set_add(set1, "label2")
-    str1 = set_fini(set1, 8)
-    set2 = set_new()
-    set_add(set2, "label1")
-    set_add(set2, "label2")
-    set_add(set2, "label3")
-    str2 = set_fini(set2, 8)
-    assert str1 is not None and str2 is not None, "Set strings should not be None"
-    comparison_result = rpmsetcmp(str1, str2)
-    assert comparison_result == -1, "Expected str1 to be less than str2"
-    print(comparison_result)
