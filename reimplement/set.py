@@ -196,8 +196,43 @@ def decode_delta(delta_values: List[int]) -> List[int]:
 
 def downsample_set(hash_values: List[int], bpp: int) -> List[int]:
     """Reduce a set of (bpp + 1) values to a set of bpp values, keeping it sorted."""
-    # WIP
-    pass
+    # find the first element with high bit set
+    mask = (1 << bpp) - 1
+    l = 0
+    u = len(hash_values)
+    while l < u:
+        i = (l + u) // 2
+        if hash_values[i] <= mask:
+            l = i + 1
+        else:
+            u = i
+
+    # merge v1 and v2 into merged, keeping it sorted
+    merged = []
+    i = 0
+    j = l
+    while i < l and j < len(hash_values):
+        high_value = hash_values[j] & mask
+        if hash_values[i] < high_value:
+            merged.append(hash_values[i])
+            i += 1
+        elif high_value < hash_values[i]:
+            merged.append(high_value)
+            j += 1
+        else:
+            merged.append(hash_values[i])
+            i += 1
+            j += 1
+
+    while i < l:
+        merged.append(hash_values[i])
+        i += 1
+
+    while j < len(hash_values):
+        merged.append(hash_values[j] & mask)
+        j += 1
+
+    return merged
 
 
 def decode_set_init(encoded_str: str) -> Tuple[int, int]:
@@ -246,7 +281,29 @@ def rpmsetcmp(str1: str, str2: str) -> int:
 
     # WIP
 
-    return 0
+    ge = True
+    le = True
+
+    i = 0
+    j = 0
+
+    while i < len(hash_values1) and j < len(hash_values2):
+        if hash_values1[i] < hash_values2[j]:
+            ge = False
+            i += 1
+        elif hash_values1[i] > hash_values2[j]:
+            le = False
+            j += 1
+        else:
+            i += 1
+            j += 1
+
+    if ge and le:
+        return 0
+    elif ge:
+        return 1
+    else:
+        return -1
 
 
 def set_new() -> Set:
