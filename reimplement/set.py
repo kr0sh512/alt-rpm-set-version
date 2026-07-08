@@ -260,10 +260,10 @@ def decode_set(encoded_str: str, Mshift: int) -> List[int]:
 
 
 def rpmsetcmp(str1: str, str2: str) -> int:
-    if str1[:3] == "set:":
-        str1 = str1[3:]
-    if str2[:3] == "set:":
-        str2 = str2[3:]
+    if str1.startswith("set:"):
+        str1 = str1[4:]
+    if str2.startswith("set:"):
+        str2 = str2[4:]
 
     bpp1, Mshift1 = decode_set_init(str1)
     bpp2, Mshift2 = decode_set_init(str2)
@@ -288,21 +288,28 @@ def rpmsetcmp(str1: str, str2: str) -> int:
 
     while i < len(hash_values1) and j < len(hash_values2):
         if hash_values1[i] < hash_values2[j]:
-            ge = False
+            le = False
             i += 1
         elif hash_values1[i] > hash_values2[j]:
-            le = False
+            ge = False
             j += 1
         else:
             i += 1
             j += 1
 
+    if i < len(hash_values1):
+        le = False
+    if j < len(hash_values2):
+        ge = False
+
     if ge and le:
         return 0
     elif ge:
         return 1
-    else:
+    elif le:
         return -1
+    else:
+        return -2
 
 
 def set_new() -> Set:

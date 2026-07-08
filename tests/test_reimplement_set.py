@@ -81,6 +81,36 @@ class DownsampleSetTest(unittest.TestCase):
         self.assertEqual(rpmset.downsample_set([8, 10, 14], 3), [0, 2, 6])
 
 
+class RpmSetCmpTest(unittest.TestCase):
+    def encode_values(self, values, bpp=8):
+        return rpmset.encode_set(values, bpp)
+
+    def test_returns_zero_for_equal_sets(self):
+        set1 = self.encode_values([1, 3, 5])
+        set2 = self.encode_values([1, 3, 5])
+        self.assertEqual(rpmset.rpmsetcmp(set1, set2), 0)
+
+    def test_accepts_set_prefix(self):
+        set1 = "set:" + self.encode_values([1, 3, 5])
+        set2 = self.encode_values([1, 3, 5])
+        self.assertEqual(rpmset.rpmsetcmp(set1, set2), 0)
+
+    def test_returns_one_when_first_set_is_superset(self):
+        set1 = self.encode_values([1, 3, 5])
+        set2 = self.encode_values([1, 3])
+        self.assertEqual(rpmset.rpmsetcmp(set1, set2), 1)
+
+    def test_returns_minus_one_when_first_set_is_subset(self):
+        set1 = self.encode_values([1, 3])
+        set2 = self.encode_values([1, 3, 5])
+        self.assertEqual(rpmset.rpmsetcmp(set1, set2), -1)
+
+    def test_returns_minus_two_for_incomparable_sets(self):
+        set1 = self.encode_values([1, 3, 7])
+        set2 = self.encode_values([1, 3, 5])
+        self.assertEqual(rpmset.rpmsetcmp(set1, set2), -2)
+
+
 class ModuleEntrypointTest(unittest.TestCase):
     def test_module_has_no_main_side_effects(self):
         output = io.StringIO()
