@@ -12,11 +12,11 @@ class Set:
 
     Attributes:
         cnt (int): The number of elements in the set.
-        labels (List[Tuple[str, int]]): A list of tuples, where each tuple contains a string and its corresponding hash value.
+        symbols (List[Tuple[str, int]]): A list of tuples, where each tuple contains a string and its corresponding hash value.
     """
 
     cnt: int
-    labels: List[Tuple[str, int]]  # List of tuples (string, hash value)
+    symbols: List[Tuple[str, int]]  # List of tuples (string, hash value)
 
 
 def check_bpp(bpp: int) -> bool:
@@ -313,20 +313,20 @@ def rpmsetcmp(str1: str, str2: str) -> int:
 
 
 def set_new() -> Set:
-    """Create a new Set instance with cnt initialized to 0 and an empty list of labels."""
-    return Set(cnt=0, labels=[])
+    """Create a new Set instance with cnt initialized to 0 and an empty list of symbols."""
+    return Set(cnt=0, symbols=[])
 
 
 def set_add(set: Set, label: str) -> None:
     """Add a label to the set."""
     hash_value = 0
-    set.labels.append((label, hash_value))
+    set.symbols.append((label, hash_value))
     set.cnt += 1
 
 
 def set_free(set: Set) -> None:
     """Free the resources associated with the set."""
-    set.labels.clear()
+    set.symbols.clear()
     set.cnt = 0
 
 
@@ -348,20 +348,20 @@ def set_fini(set: Set, bpp: int) -> str | None:
 
     # calculate hash values for each label and store them in the set
     for i in range(set.cnt):
-        label, _ = set.labels[i]
+        label, _ = set.symbols[i]
         computed_hash = hash(label) & mask
-        set.labels[i] = (label, computed_hash)
+        set.symbols[i] = (label, computed_hash)
 
-    set.labels.sort(key=lambda x: x[1])  # Sort by hash value
+    set.symbols.sort(key=lambda x: x[1])  # Sort by hash value
 
     # warn on hash collisions
     for i in range(1, set.cnt):
-        if set.labels[i][1] == set.labels[i - 1][1]:
+        if set.symbols[i][1] == set.symbols[i - 1][1]:
             print(
-                f"Warning: Hash collision detected for labels '{set.labels[i][0]}' and '{set.labels[i - 1][0]}'"
+                f"Warning: Hash collision detected for symbols '{set.symbols[i][0]}' and '{set.symbols[i - 1][0]}'"
             )
 
-    hash_values = [label_hash for _, label_hash in set.labels]
+    hash_values = [label_hash for _, label_hash in set.symbols]
 
     encoded_string = encode_set(hash_values, bpp)
 
