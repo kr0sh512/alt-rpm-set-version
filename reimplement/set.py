@@ -355,11 +355,18 @@ def set_fini(set: Set, bpp: int) -> str | None:
     set.symbols.sort(key=lambda x: x[1])  # Sort by hash value
 
     # warn on hash collisions
+    j = 0
     for i in range(1, set.cnt):
         if set.symbols[i][1] == set.symbols[i - 1][1]:
             print(
                 f"Warning: Hash collision detected for symbols '{set.symbols[i][0]}' and '{set.symbols[i - 1][0]}'"
             )
+        else:
+            j += 1
+            set.symbols[j] = set.symbols[i]
+
+    set.symbols = set.symbols[: j + 1]
+    set.cnt = j + 1
 
     hash_values = [label_hash for _, label_hash in set.symbols]
 

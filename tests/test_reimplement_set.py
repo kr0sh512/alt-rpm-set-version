@@ -52,11 +52,13 @@ class SetStringTest(unittest.TestCase):
         encoded = rpmset.set_fini(item_set, bpp=8)
         self.assertIsNotNone(encoded)
         self.assertEqual(item_set.cnt, 2)
-        self.assertEqual(item_set.labels, sorted(item_set.labels, key=lambda item: item[1]))
+        self.assertEqual(
+            item_set.symbols, sorted(item_set.symbols, key=lambda item: item[1])
+        )
 
         rpmset.set_free(item_set)
         self.assertEqual(item_set.cnt, 0)
-        self.assertEqual(item_set.labels, [])
+        self.assertEqual(item_set.symbols, [])
 
     def test_hash_is_stable_64_bit_ascii_integer(self):
         self.assertEqual(rpmset.hash("ascii_symbol"), 10827468943333989194)
@@ -69,7 +71,9 @@ class SetStringTest(unittest.TestCase):
 
 class DownsampleSetTest(unittest.TestCase):
     def test_masks_high_half_and_keeps_sorted_unique_values(self):
-        self.assertEqual(rpmset.downsample_set([1, 3, 6, 8, 10, 14], 3), [0, 1, 2, 3, 6])
+        self.assertEqual(
+            rpmset.downsample_set([1, 3, 6, 8, 10, 14], 3), [0, 1, 2, 3, 6]
+        )
 
     def test_removes_duplicates_created_by_masking(self):
         self.assertEqual(rpmset.downsample_set([1, 6, 14], 3), [1, 6])
