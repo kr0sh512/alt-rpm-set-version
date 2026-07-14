@@ -1,3 +1,7 @@
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include "stdint.h"
 #include "stdio.h"
 #include "system.h"
@@ -78,7 +82,7 @@ int cmp(const void* arg1, const void* arg2) {
 
 static int log2i(int n) {
   int m = 0;
-  while (n / 2) m++;
+  while (n /= 2) m++;
 
   return m;
 }
@@ -179,41 +183,57 @@ static int encode_golomb(int cnt, const unsigned* delta_arr_pt, int Mshift, char
  * to another 'Z' (which would require high bits set to "11").  This is
  * how multiple escapes are avoided.
  */
+
+static char* bits_to_char(int c, char* base62) {
+  assert(c >= 0 && c <= 61);
+
+  if (c < 10) {
+    *base62++ = c + '0';
+  } else if (c < 36) {
+    *base62++ = c - 10 + 'a';
+  } else if (c < 62) {
+    *base62++ = c - 36 + 'A';
+  }
+
+  return base62;
+}
+
+// заполняет с младших, в случае Z - ставит в старшие
 static int encode_base62(int bit_cnt, const char* bit_arr_pt, char* base62_str_pt) {
   char* base62_start = base62_str_pt;
 
-  // int bits_Z = 0;  // bits from Z-escape;
-  int bits_cnt = 0;
-  unsigned bits_buf = 1;  // 1 bit as marker
+  // из-за этого заполнения я не знаю, как написать лучше...
+
+  int bits2 = 0;  // number of high bits set
+  int bits6 = 0;  // number of regular bits set
+  int num6b = 0;  // pending 6-bit number
 
   while (bit_cnt-- > 0) {
-    bits_buf <<= 1;
-    bits_buf |= *bit_arr_pt++;
+    num6b |= (*bit_arr_pt++ << bits6++);
 
-    if (!(bits_buf & (1 << 6))) continue;
+    if (bits6 + bits2 < 6) continue;
 
-    bits_buf &= ~(1 << 6);  // remove flag
-
-    if (bits_buf >= 61) {  // 61 62 63 cases
+    if (num6b >= 61) {  // 61 62 63 cases
       base62_str_pt = bits_to_char(61, base62_str_pt);
-      bits_buf = (1 << 2) | (bits_buf - 61);  // 1 (00|01|10)
+      bits2 = 2;
+      num6b = (num6b - 61) << 4;  // (0|16|32) in high bits
     } else {
-      base62_str_pt = bits_to_char(bits_buf, base62_str_pt);
-      bits_buf = 1;
+      assert(num6b < 61);
+      base62_str_pt = bits_to_char(num6b, base62_str_pt);
+      bits2 = 0;
+      num6b = 0;
     }
+
+    bits6 = 0;
   }
 
-  // flush buffer
-  if (bits_buf != 1) {
-    unsigned sliding_one = 1 << 6;
-    while (sliding_one > bits_buf) sliding_one >>= 1;
-    bits_buf &= ~sliding_one;  // remove flag
-
-    assert(bits_buf < 61);  // should not be 61 62 63 cases
-    base62_str_pt = bits_to_char(bits_buf, base62_str_pt);
+  if (bits6 + bits2) {
+    assert(num6b < 61);
+    base62_str_pt = bits_to_char(num6b, base62_str_pt);
   }
 
   *base62_str_pt = '\0';
+
   return base62_str_pt - base62_start;
 }
 
