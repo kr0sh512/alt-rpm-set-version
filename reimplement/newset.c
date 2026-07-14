@@ -125,15 +125,15 @@ static int encode_set_size(int cnt, int bpp) {
 
 // ---
 
-static void encode_delta(int cnt, unsigned* hash_arr_pt) {
+static void encode_delta(int cnt, unsigned* hash_pt) {
   assert(cnt > 0);
 
-  unsigned* end_pt = hash_arr_pt + cnt;
-  unsigned prev_hash = *hash_arr_pt++;
+  unsigned* end_pt = hash_pt + cnt;
+  unsigned prev_hash = *hash_pt++;
 
-  while (hash_arr_pt < end_pt) {
-    *hash_arr_pt -= prev_hash;
-    prev_hash += *hash_arr_pt++;
+  while (hash_pt < end_pt) {
+    *hash_pt -= prev_hash;
+    prev_hash += *hash_pt++;
   }
 
   return;
@@ -144,30 +144,30 @@ static void encode_delta(int cnt, unsigned* hash_arr_pt) {
 // The first integer is then stored in unary coding (which is a variable-length sequence of '0'
 // followed by a terminating '1'); the second part is stored in normal binary coding (using Mshift
 // bits).
-static int encode_golomb(int cnt, const unsigned* delta_arr_pt, int Mshift, char* bit_arr_pt) {
-  char* start_pt = bit_arr_pt;
+static int encode_golomb(int cnt, const unsigned* delta_pt, int Mshift, char* bit_pt) {
+  char* start_pt = bit_pt;
   const unsigned mask = (1 << Mshift) - 1;
 
   for (int i = 0; i < cnt; ++i) {
-    unsigned elem = *delta_arr_pt++;
+    unsigned elem = *delta_pt++;
 
     // first part: variable-length sequence
     unsigned q = elem >> Mshift;
     for (int j = 0; j < (int)q; ++j) {
-      *bit_arr_pt++ = 0;
+      *bit_pt++ = 0;
     }
 
-    *bit_arr_pt++ = 1;
+    *bit_pt++ = 1;
 
     // second part: lower Mshift bits
     unsigned r = elem & mask;
     for (int j = 0; j < Mshift; ++j) {
-      *bit_arr_pt++ = r & 1;
+      *bit_pt++ = r & 1;
       r >>= 1;
     }
   }
 
-  return bit_arr_pt - start_pt;
+  return bit_pt - start_pt;
 }
 
 // Main base62 encoding routine: pack bit_arr into base62 string.
@@ -199,7 +199,7 @@ static char* bits_to_char(int c, char* base62) {
 }
 
 // заполняет с младших, в случае Z - ставит в старшие
-static int encode_base62(int bit_cnt, const char* bit_arr_pt, char* base62_str_pt) {
+static int encode_base62(int bit_cnt, const char* bit_pt, char* base62_str_pt) {
   char* base62_start = base62_str_pt;
 
   // из-за этого заполнения я не знаю, как написать лучше...
@@ -209,7 +209,7 @@ static int encode_base62(int bit_cnt, const char* bit_arr_pt, char* base62_str_p
   int num6b = 0;  // pending 6-bit number
 
   while (bit_cnt-- > 0) {
-    num6b |= (*bit_arr_pt++ << bits6++);
+    num6b |= (*bit_pt++ << bits6++);
 
     if (bits6 + bits2 < 6) continue;
 
