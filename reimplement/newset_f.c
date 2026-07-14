@@ -6,7 +6,7 @@ struct set {
   size_t cnt;
   struct symbols {
     const char* str;
-    int hash;
+    uint64_t hash;
   }* symbols_v;
 };
 
@@ -48,18 +48,15 @@ struct set* set_free(struct set* set) {
 
 // ---
 
-static unsigned int hash(const char* str) {
-  unsigned int hash = 0x9e3779b9;
-  const unsigned char* p = (const unsigned char*)str;
-  while (*p) {
-    hash += *p++;
-    hash += (hash << 10);
-    hash ^= (hash >> 6);
+uint64_t hash(const char* str) {
+  uint64_t h = 0xcbf29ce484222325ULL;
+
+  while (*str) {
+    h ^= (uint64_t)(unsigned char)(*str++);
+    h *= 0x100000001b3ULL;
   }
-  hash += (hash << 3);
-  hash ^= (hash >> 11);
-  hash += (hash << 15);
-  return hash;
+
+  return h;
 }
 
 int cmp(const void* arg1, const void* arg2) {
@@ -77,9 +74,9 @@ const char* set_fini(struct set* set, int bpp) {
 
   assert(set != NULL);
   assert(set->cnt > 0);
-  assert(bpp >= 10 && bpp <= 32);
+  assert(bpp >= 10 && bpp <= 63);
 
-  int mask = (bpp < 32) ? (1u << bpp) - 1 : ~0u;
+  uint64_t mask = (1ULL << bpp) - 1;
 
   for (size_t i = 0; i < set->cnt; ++i) {
     set->symbols_v[i].hash = hash(set->symbols_v[i].str) & mask;
@@ -96,7 +93,7 @@ const char* set_fini(struct set* set, int bpp) {
             set->symbols_v[i + 1].str);
   }
 
-  int unique_hash[set->cnt];
+  uint64_t unique_hash[set->cnt];
   size_t unique_cnt = 0;
 
   // delete duplicates
