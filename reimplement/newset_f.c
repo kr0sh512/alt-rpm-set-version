@@ -60,8 +60,8 @@ uint64_t hash(const char* str) {
 }
 
 int cmp(const void* arg1, const void* arg2) {
-  const struct symbols* s1 = arg1;
-  const struct symbols* s2 = arg2;
+  const struct symbols* s1 = (const struct symbols*)arg1;
+  const struct symbols* s2 = (const struct symbols*)arg2;
 
   if (s1->hash > s2->hash) return 1;
   if (s2->hash > s1->hash) return -1;

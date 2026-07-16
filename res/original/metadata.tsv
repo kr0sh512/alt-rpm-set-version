@@ -1,0 +1,12 @@
+set_c	/home/krosh/Docs/ARSV/rpm-build/lib/set.c
+rpm_root	/home/krosh/Docs/ARSV/rpm-build
+runner	/home/krosh/Docs/ARSV/res/original/build/run_set
+runs	3
+target	/usr/bin/true
+target	/usr/bin/ls
+target	/usr/bin/bash
+target	/usr/bin/python3.14
+target	/usr/lib/libc.so.6
+target	/usr/lib/libm.so.6
+target	/usr/lib/libz.so.1.3.1.zlib-ng
+target	/usr/lib/libstdc++.so.6.0.35

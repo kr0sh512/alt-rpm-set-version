@@ -1,0 +1,5 @@
+input	/usr/bin/true
+kind	executable
+bpp_mode	auto
+role	object	labels	bpp	set	set_new_ns	set_add_total_ns	set_fini_ns	set_free_ns	set_api_total_ns
+required	/usr/lib/libc.so.6	49	22	set:pjuApNlauv90ZJLOZ7p3GFF9oItmpZkt5dkCQz6qEZmONBVl204EQ7olKXdSC8hHiK15J85Shwyy6CdZG1jjbxDVZdI7OEfolhJgTNc16JCOvd8aNt64E3ISRaOHh2XQk5vZ4KfmAJSyaC4gqeCkg70	888	18902	40010	4700	64500
