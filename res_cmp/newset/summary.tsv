@@ -1,5 +1,5 @@
 case	binary	library	runs	cmp_result	outputs_consistent	median_rpmsetcmp_ns
-true-libc	/usr/bin/true	/usr/lib/libc.so.6	3	-2	yes	350935
-ls-libc	/usr/bin/ls	/usr/lib/libc.so.6	3	-2	yes	396275
-bash-libc	/usr/bin/bash	/usr/lib/libc.so.6	3	-2	yes	471972
-python-libc	/usr/bin/python3.14	/usr/lib/libc.so.6	3	-2	yes	393216
+true-libc	/usr/bin/true	/usr/lib/libc.so.6	10	1	yes	206863.5
+ls-libc	/usr/bin/ls	/usr/lib/libc.so.6	10	1	yes	205386.5
+bash-libc	/usr/bin/bash	/usr/lib/libc.so.6	10	1	yes	223012.5
+python-libc	/usr/bin/python3.14	/usr/lib/libc.so.6	10	1	yes	189414.5

@@ -1,6 +1,6 @@
-set_c	/home/krosh/Docs/ARSV/rpm-build/lib/set.c
-rpm_root	/home/krosh/Docs/ARSV/rpm-build
-runs	3
+set_c	/home/krosh/Docs/ARSV/alt-rpm/lib/set.c
+rpm_root	/home/krosh/Docs/ARSV/alt-rpm
+runs	10
 case	true-libc	/usr/bin/true	/usr/lib/libc.so.6
 case	ls-libc	/usr/bin/ls	/usr/lib/libc.so.6
 case	bash-libc	/usr/bin/bash	/usr/lib/libc.so.6

@@ -370,7 +370,7 @@ static int decode_base62(const char* base62_str, char* bit_pt) {
       num4b &= ~mask;            // low bits
       assert(num2b != mask);     // not both bits set
 
-      bit_pt = putnbits(6, 61 + num2b >> 4, bit_pt);  // 61 + (0|1|2) in high bits
+      bit_pt = putnbits(6, 61 + (num2b >> 4), bit_pt);  // 61 + (0|1|2) in high bits
       bit_pt = putnbits(4, num4b, bit_pt);
     }
 
@@ -576,18 +576,6 @@ int rpmsetcmp(const char* str1, const char* str2) {
     cnt2 = downsample_set(cnt2, hash_arr2, pt2, bpp2);
     hash_arr2 = pt2;
   }
-
-  for (int i = 0; i < cnt1; ++i) {
-    printf("%d ", hash_arr1[i]);
-  }
-  printf("\n");
-
-  printf("\n\n\n");
-
-  for (int i = 0; i < cnt2; ++i) {
-    printf("%d ", hash_arr2[i]);
-  }
-  printf("\n");
 
   // compare
   int ge = 1;
