@@ -1,8 +1,14 @@
 *.o
 
+rpmquery-alt-linux.md
 rpmset
 rpmset-new
 run_set
+
+# Generated benchmark results
+/res/
+/res_cmp/
+/res_old/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

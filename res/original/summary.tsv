@@ -1,9 +1,0 @@
-target	kind	runs	sets_per_run	outputs_consistent	median_set_new_ns	median_set_add_total_ns	median_set_fini_ns	median_set_free_ns	median_set_api_total_ns
-/usr/bin/true	executable	3	1	yes	1568	20888	38404	4192	65396
-/usr/bin/ls	executable	3	2	yes	2340	38954	82001	10718	134013
-/usr/bin/bash	executable	3	2	yes	2994	166192	282841	42769	515343
-/usr/bin/python3.14	executable	3	2	yes	2547	10620	15959	949	33556
-/usr/lib/libc.so.6	shared-library	3	1	yes	1584	1160642	2036878	312745	3511849
-/usr/lib/libm.so.6	shared-library	3	1	yes	963	363490	836082	145924	1355394
-/usr/lib/libz.so.1.3.1.zlib-ng	shared-library	3	1	yes	608	20051	44646	8198	77065
-/usr/lib/libstdc++.so.6.0.35	shared-library	3	1	yes	1340	3330034	5405944	889278	9626368

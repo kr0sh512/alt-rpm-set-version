@@ -1,6 +1,0 @@
-input	/usr/bin/python3.14
-kind	executable
-bpp_mode	auto
-role	object	labels	bpp	set	set_new_ns	set_add_total_ns	set_fini_ns	set_free_ns	set_api_total_ns
-required	/usr/lib/libc.so.6	1	22	set:poqQrl	588	2935	6134	404	10061
-required	/usr/lib/libpython3.14.so.1.0	1	21	set:onX6r4	694	9626	2059	387	12766

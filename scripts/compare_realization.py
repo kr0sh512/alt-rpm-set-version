@@ -20,7 +20,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUN_SET_SOURCE = REPO_ROOT / "scripts" / "run_set.cpp"
 DEFAULT_RPM_ROOT = REPO_ROOT / "rpm-build"
@@ -50,7 +49,11 @@ DEFAULT_TARGET_GROUPS = (
     ("/usr/lib/libc.so.6", "/lib64/libc.so.6", "/lib/x86_64-linux-gnu/libc.so.6"),
     ("/usr/lib/libm.so.6", "/lib64/libm.so.6", "/lib/x86_64-linux-gnu/libm.so.6"),
     ("/usr/lib/libz.so.1", "/usr/lib64/libz.so.1", "/lib/x86_64-linux-gnu/libz.so.1"),
-    ("/usr/lib/libstdc++.so.6", "/usr/lib64/libstdc++.so.6", "/lib/x86_64-linux-gnu/libstdc++.so.6"),
+    (
+        "/usr/lib/libstdc++.so.6",
+        "/usr/lib64/libstdc++.so.6",
+        "/lib/x86_64-linux-gnu/libstdc++.so.6",
+    ),
 )
 
 
@@ -80,7 +83,10 @@ class TargetSummary:
             "outputs_consistent": "yes" if self.outputs_consistent else "no",
         }
         row.update(
-            {f"median_{field}": format_number(value) for field, value in self.medians.items()}
+            {
+                f"median_{field}": format_number(value)
+                for field, value in self.medians.items()
+            }
         )
         return row
 
@@ -100,7 +106,10 @@ def bpp_value(value: str) -> int:
 
 
 def safe_name(value: str) -> str:
-    name = "".join(character if character.isalnum() or character in "._-" else "-" for character in value)
+    name = "".join(
+        character if character.isalnum() or character in "._-" else "-"
+        for character in value
+    )
     name = name.strip(".-")
     if not name or name in {".", ".."}:
         raise ValueError(f"invalid result name: {value!r}")
@@ -119,9 +128,22 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         )
     )
     parser.add_argument("set_c", type=Path, help="path to the set.c implementation")
-    parser.add_argument("-n", "--runs", type=positive_int, default=10, help="runs per ELF target (default: 10)")
-    parser.add_argument("--rpm-root", type=Path, default=DEFAULT_RPM_ROOT, help="ALT rpm source root")
-    parser.add_argument("--res-dir", type=Path, default=REPO_ROOT / "res", help="result root (default: repository res/)")
+    parser.add_argument(
+        "-n",
+        "--runs",
+        type=positive_int,
+        default=10,
+        help="runs per ELF target (default: 10)",
+    )
+    parser.add_argument(
+        "--rpm-root", type=Path, default=DEFAULT_RPM_ROOT, help="ALT rpm source root"
+    )
+    parser.add_argument(
+        "--res-dir",
+        type=Path,
+        default=REPO_ROOT / "res",
+        help="result root (default: repository res/)",
+    )
     parser.add_argument("--name", help="implementation directory name under res/")
     parser.add_argument(
         "--target",
@@ -130,7 +152,9 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         default=[],
         help="ELF target; repeat to override the built-in binary/library set",
     )
-    parser.add_argument("--bpp", type=bpp_value, help="force one bpp value for every run_set invocation")
+    parser.add_argument(
+        "--bpp", type=bpp_value, help="force one bpp value for every run_set invocation"
+    )
     parser.add_argument("--cc", default="cc", help="C compiler (default: cc)")
     parser.add_argument("--cxx", default="g++", help="C++ compiler (default: g++)")
     return parser.parse_args(argv)
@@ -168,7 +192,11 @@ def select_default_targets() -> list[Path]:
 
 def resolve_targets(explicit: Iterable[Path]) -> list[Path]:
     supplied = list(explicit)
-    targets = [resolve_file(path, "target") for path in supplied] if supplied else select_default_targets()
+    targets = (
+        [resolve_file(path, "target") for path in supplied]
+        if supplied
+        else select_default_targets()
+    )
     unique: list[Path] = []
     seen: set[Path] = set()
     for target in targets:
@@ -231,7 +259,7 @@ def compile_runner(
     log: list[str] = [f"set_c={set_source}", f"rpm_root={rpm_root}"]
 
     common_flags = [
-        "-O2",
+        "-O3",
         "-std=gnu11",
         "-include",
         "stddef.h",
@@ -274,7 +302,7 @@ def compile_runner(
         ]
         link_command = [
             cxx,
-            "-O2",
+            "-O3",
             "-std=c++17",
             "-Wall",
             "-Wextra",
@@ -307,7 +335,9 @@ def compile_runner(
 def parse_run_set_output(output: str) -> ParsedRun:
     lines = output.splitlines()
     try:
-        table_start = next(index for index, line in enumerate(lines) if line.startswith("role\t"))
+        table_start = next(
+            index for index, line in enumerate(lines) if line.startswith("role\t")
+        )
     except StopIteration as exception:
         raise RuntimeError("run_set output has no TSV result table") from exception
 
@@ -317,7 +347,9 @@ def parse_run_set_output(output: str) -> ParsedRun:
             continue
         key, value = line.split("\t", 1)
         metadata[key] = value
-    rows = tuple(csv.DictReader(io.StringIO("\n".join(lines[table_start:])), delimiter="\t"))
+    rows = tuple(
+        csv.DictReader(io.StringIO("\n".join(lines[table_start:])), delimiter="\t")
+    )
     if not rows:
         raise RuntimeError("run_set output contains no result rows")
 
@@ -385,7 +417,9 @@ def benchmark_target(
         kind=parsed_runs[0].kind if len(kinds) == 1 else "inconsistent",
         runs=runs,
         sets_per_run=len(parsed_runs[0].rows) if len(row_counts) == 1 else -1,
-        outputs_consistent=len(signatures) == 1 and len(kinds) == 1 and len(row_counts) == 1,
+        outputs_consistent=len(signatures) == 1
+        and len(kinds) == 1
+        and len(row_counts) == 1,
         medians=medians,
     )
 
@@ -464,7 +498,14 @@ def main(argv: Sequence[str]) -> int:
             )
 
         write_summary(result_dir / "summary.tsv", summaries)
-        write_metadata(result_dir / "metadata.tsv", set_source, rpm_root, runner, args.runs, targets)
+        write_metadata(
+            result_dir / "metadata.tsv",
+            set_source,
+            rpm_root,
+            runner,
+            args.runs,
+            targets,
+        )
         print_summary(summaries)
         print(f"\nresults\t{result_dir}")
         return 0

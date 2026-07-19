@@ -1,6 +1,0 @@
-input	/usr/bin/ls
-kind	executable
-bpp_mode	auto
-role	object	labels	bpp	set	set_new_ns	set_add_total_ns	set_fini_ns	set_free_ns	set_api_total_ns
-required	/usr/lib/libc.so.6	115	22	set:piCA6dPgcb6nFIXck36b2BnrNyJq5o9HZtFwI81xTampyiCEimHaVFOhthjjjsbJQUab6RB9kpZuT2tXLxOkfqExWpONPYG001QfRFGPoAaovlmjBMy0ej4FZ5sahykBs15tA27PcnQmBVIlgx3gDhZDshLN6WpxP13VwYEVFsXbIvs8T5qabnfN9JcwTKdHuajz95zKYbNY8EYZj4to5d5zkZLp7WNU4oQqaZG1h9KLoMZICdJrviuMhJXA1mrJyudiiyNZsrLZ2AMIEUHjKLOJzyZENHunU4WUc9wVOnYRBThKMLbPzHjOunYH8BrN42mwQ	1634	36239	77718	10228	125819
-required	/usr/lib/libcap.so.2	3	17	set:kiO6UObWBY0	706	2715	4283	490	8194
