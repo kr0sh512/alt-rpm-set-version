@@ -1,0 +1,17 @@
+2026-07-19T03:40:59Z	START	ORBit2	x86_64	processing	-	-	-	-	-	2.14.20-alt0.4:sisyphus+361606.200.1.1@1730563927
+2026-07-19T03:41:09Z	DEPENDENCY	ORBit2	x86_64	extra_generated	requires	libORBit-2.so.0()(64bit)	>=		set:niDtqCAHBjYjaJDKEoB0hQrUcD1RWQ8Y9dT4Ll8IwTKKrUFvFOcPooPnZzZqghuX9GWYZi3	-
+2026-07-19T03:41:09Z	DEPENDENCY	ORBit2	x86_64	match	requires	libglib-2.0.so.0()(64bit)	>=	set:ojfwe09N7dwsn61JFrFyGiav6VPWMh6BXOl0ykouiiezwiOhIbG0	set:ojfwe09N7dwsn61JFrFyGiav6VPWMh6BXOl0ykouiiezwiOhIbG0	-
+2026-07-19T03:41:09Z	SUMMARY	ORBit2	x86_64	mismatch	-	-	-	-	-	requires expected=1 generated=2 differences=0 extras=1; complete=1
+
+
+2026-07-19T03:48:54Z	DEPENDENCY	SILLY	x86_64	mismatch	requires	libjpeg.so.62()(64bit)	>=	set:jfvZkgcUQqm1WcNFYdT6Zh	set:kgvLPFlp5EP4DOJVCPR1WC6	-
+2026-07-19T03:48:54Z	DEPENDENCY	SILLY	x86_64	match	requires	libpng16.so.16()(64bit)	>=	set:lhkC1fmC6EFQ5Klh4dezRCyvQFOXIZ3uwhXdUhBK49	set:lhkC1fmC6EFQ5Klh4dezRCyvQFOXIZ3uwhXdUhBK49	-
+
+2026-07-19T03:58:11Z	START	abuse	x86_64	processing	-	-	-	-	-	0.8-alt2@1308659965
+2026-07-19T03:58:33Z	DEPENDENCY	abuse	x86_64	match	requires	libSDL-1.2.so.0()(64bit)	>=	set:lgkZiCZcFvTDDX6Y1PaRgCdFuVAwizcZfaTezfxZFUxcDOoVbbKRxY6ahoMjPQkxX5fdZtjAKGEY4	set:lgkZiCZcFvTDDX6Y1PaRgCdFuVAwizcZfaTezfxZFUxcDOoVbbKRxY6ahoMjPQkxX5fdZtjAKGEY4	-
+2026-07-19T03:58:33Z	DEPENDENCY	abuse	x86_64	mismatch	requires	libSDL_mixer-1.2.so.0()(64bit)	>=	set:lgIdCOqw7JFqcojADYwCZ7pQY3CJ1LnAqVzI3Z0QXq0pLy1	set:kfMSoaHVyGBhV7CJ1YuVyx95uAdQPsq0b5zW6rUlsY3	-
+2026-07-19T03:58:33Z	SUMMARY	abuse	x86_64	mismatch	-	-	-	-	-	requires expected=2 generated=2 differences=1 extras=0; complete=1
+
+2026-07-19T04:08:20Z	DEPENDENCY	airstrike	x86_64	mismatch	requires	libSDL_mixer-1.2.so.0()(64bit)	>=	set:lirzppdVhrMiF4ChTZdaR8	set:khS6jpdPZrxpQlg2V9Bq4	-
+
+
