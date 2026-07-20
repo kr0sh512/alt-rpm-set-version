@@ -2,6 +2,4 @@
 
 Research on ALT Linux RPM set.c and dependency comparison using encoded symbol sets.
 
-## Tools
-
-- [Compare Sisyphus set dependencies with `newset.c`](Docs/compare-sisyphus-set-versions.md)
+- [Docs about current set:version implementation](Docs/set:version.md)
