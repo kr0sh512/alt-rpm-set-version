@@ -6,7 +6,7 @@ MIRROR=https://ftp.altlinux.org/pub/distributions/ALTLinux
 REQUIRE_LIMIT=100
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-REPO_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
+REPO_ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/arsv-set-check.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 
@@ -64,7 +64,8 @@ EOF
 
 fetch_metadata()
 {
-    mkdir -p "$WORK/apt/lists/partial" "$WORK/apt/archives/partial"
+    mkdir -p "$WORK/apt/lists/partial" "$WORK/apt/archives/partial" \
+        "$WORK/root/var/lib/rpm"
     : >"$WORK/apt/apt.conf"
     : >"$WORK/apt/status"
     printf '%s\n' \
@@ -82,6 +83,7 @@ fetch_metadata()
         -o "Dir::Cache::archives=$WORK/apt/archives"
         -o "Dir::Cache::pkgcache=$WORK/apt/pkgcache.bin"
         -o "Dir::Cache::srcpkgcache=$WORK/apt/srcpkgcache.bin"
+        -o "RPM::RootDir=$WORK/root"
     )
 
     APT_CONFIG="$WORK/apt/apt.conf" apt-get "${options[@]}" -qq update

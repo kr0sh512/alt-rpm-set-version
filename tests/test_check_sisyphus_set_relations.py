@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = REPO_ROOT / "scripts" / "check_sisyphus_set_relations.sh"
+SCRIPT = REPO_ROOT / "scripts" / "rpmsetcmp" / "check_sisyphus_set_relations.sh"
 PROVIDER_SET = "set:jg2ZwFjdTD2B0"
 REQUIRED_SET = "set:jiXMb"
 
@@ -22,12 +22,15 @@ def run_with_metadata(
     (fake_bin / "apt-get").write_text(
         """#!/bin/sh
 archive=
+rpm_root=
 for argument in "$@"; do
     case $argument in
         Dir::Cache::archives=*) archive=${argument#*=} ;;
+        RPM::RootDir=*) rpm_root=${argument#*=} ;;
     esac
 done
 [ -n "$archive" ] && [ -d "$archive/partial" ]
+[ -n "$rpm_root" ] && [ -d "$rpm_root/var/lib/rpm" ]
 """,
         encoding="utf-8",
     )

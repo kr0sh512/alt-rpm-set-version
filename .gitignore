@@ -1,5 +1,7 @@
 *.o
 
+tt
+
 # Generated benchmark results
 /res/
 /res_cmp/
