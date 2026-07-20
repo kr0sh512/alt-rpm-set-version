@@ -11,7 +11,7 @@ struct set {
   size_t cnt;
   struct symbols {
     const char* str;
-    int hash;
+    unsigned hash;
   }* symbols_v;
 };
 
@@ -267,7 +267,7 @@ const char* set_fini(struct set* set, int bpp) {
   assert(set->cnt > 0);
   assert(bpp >= 10 && bpp <= 32);
 
-  int mask = (bpp < 32) ? (1u << bpp) - 1 : ~0u;
+  unsigned mask = (bpp < 32) ? (1u << bpp) - 1 : ~0u;
 
   for (size_t i = 0; i < set->cnt; ++i) {
     set->symbols_v[i].hash = hash(set->symbols_v[i].str) & mask;
