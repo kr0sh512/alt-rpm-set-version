@@ -8,12 +8,13 @@ import shlex
 import subprocess
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
-# Test parameters. Edit these constants directly; the script has no CLI options.
-MAX_N = 1_000
-MAX_M = 100
-BPP = 31
+MAX_N = 1000  # max words in file
+MAX_M = 100  # max len for word
+MIN_BPP = 10
+MAX_BPP = 32
 ALPHABET = ".0123456789@ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz"
 CC = "cc"
 CFLAGS = ("-O2", "-std=gnu11", "-D_GNU_SOURCE")
@@ -58,10 +59,10 @@ def build_mkset(source: Path, output: Path, build_dir: Path) -> None:
         )
 
 
-def run_mkset(binary: Path, input_path: Path) -> str:
+def run_mkset(binary: Path, input_path: Path, bpp: int) -> str:
     with input_path.open("r", encoding="ascii") as input_file:
         completed = subprocess.run(
-            [str(binary), str(BPP)],
+            [str(binary), str(bpp)],
             stdin=input_file,
             text=True,
             capture_output=True,
@@ -74,9 +75,10 @@ def run_mkset(binary: Path, input_path: Path) -> str:
     return completed.stdout.strip()
 
 
-def generate_input(path: Path, n: int, m: int) -> None:
+def generate_input(path: Path, n: int) -> None:
     with path.open("w", encoding="ascii") as output:
         for _ in range(n):
+            m = random.randint(1, MAX_M)
             output.write("".join(random.choices(ALPHABET, k=m)))
             output.write("\n")
 
@@ -84,8 +86,8 @@ def generate_input(path: Path, n: int, m: int) -> None:
 def main() -> None:
     if MAX_N < 1 or MAX_M < 1:
         raise ValueError("MAX_N and MAX_M must be at least 1")
-    if not 10 <= BPP <= 32:
-        raise ValueError("BPP must be in the range 10..32")
+    if not 10 <= MIN_BPP <= MAX_BPP <= 32:
+        raise ValueError("MIN_BPP and MAX_BPP must be in the range 10..32")
 
     ERROR_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -105,17 +107,21 @@ def main() -> None:
         tests_completed = 0
         while True:
             n = random.randint(1, MAX_N)
-            m = random.randint(1, MAX_M)
-            print(f"tests={tests_completed} n={n} m={m}", flush=True)
+            bpp = random.randint(MIN_BPP, MAX_BPP)
+            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(
+                f"{current_time} tests={tests_completed} bpp={bpp} n={n}",
+                flush=True,
+            )
 
-            generate_input(input_path, n, m)
-            new_result = run_mkset(mkset_new, input_path)
-            old_result = run_mkset(mkset, input_path)
+            generate_input(input_path, n)
+            new_result = run_mkset(mkset_new, input_path, bpp)
+            old_result = run_mkset(mkset, input_path, bpp)
 
             tests_completed += 1
             if new_result != old_result:
                 error_path = ERROR_DIR / (
-                    f"test_{tests_completed}_n{n}_m{m}_{time.time_ns()}.txt"
+                    f"test_{tests_completed}_bpp{bpp}_n{n}_{time.time_ns()}.txt"
                 )
                 error_path.write_bytes(input_path.read_bytes())
                 print(f"mismatch: saved input to {error_path}", flush=True)
