@@ -169,41 +169,6 @@ The encoding alphabet is `0-9,a-z,A-Z`, but the `Z` character encodes 61, 62, an
 
 Note that this encoding cannot produce a `ZZ` sequence, because the `Z` character requires the two high bits to be set to `11`.
 
-!!! Example is incorrect.
-
-Transformation example:
-
-```
-Mshift = 5
-bits = 1 01111 00 1 00010
-```
-
-Or, equivalently:
-
-```
-bits = 101111 001000 10
-```
-
-Bits are read least-significant bit first. For the first six bits:
-
-```
-101111 = 1*1 + 0*2 + 1*4 + 1*8 + 1*16 + 1*32 = 61 = Z
-```
-
-Two bits, `00`, are then inserted into the sequence immediately after the bits encoding Z.
-
-```
-bits = 101111 000010 0010
-000010 = 16 = g
-0010(00) = 4 = 4
-```
-
-The resulting `base62` string is:
-
-```
-10111100100010 = Zg4
-```
-
 ## Comparing set-strings
 
 When set-strings are compared, the transformation process is reversed until the hash values are obtained:
