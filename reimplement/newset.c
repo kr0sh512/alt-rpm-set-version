@@ -7,6 +7,10 @@
 #include "stdio.h"
 #include "system.h"
 
+#define CACHE_SIZE 256
+#define PIVOT_SIZE 243
+#define SENTINELS 0
+
 struct set {
   size_t cnt;
   struct symbols {
@@ -142,9 +146,9 @@ static void encode_delta(int cnt, unsigned* hash_pt) {
 
 // Main golomb encoding routine: package integers into bits.
 // http://algo2.iti.uni-karlsruhe.de/singler/publications/cacheefficientbloomfilters-wea2007.pdf
-// The first integer is then stored in unary coding (which is a variable-length sequence of '0'
-// followed by a terminating '1'); the second part is stored in normal binary coding (using Mshift
-// bits).
+// The first integer is then stored in unary coding (which is a variable-length
+// sequence of '0' followed by a terminating '1'); the second part is stored in
+// normal binary coding (using Mshift bits).
 static int encode_golomb(int cnt, const unsigned* delta_pt, int Mshift, char* bit_pt) {
   char* start_pt = bit_pt;
   const unsigned mask = (1 << Mshift) - 1;
@@ -199,7 +203,8 @@ static char* bits_to_char(int c, char* base62) {
   return base62;
 }
 
-// filling from the least significant bits, in case of Z - put in the most significant bits
+// filling from the least significant bits, in case of Z - put in the most
+// significant bits
 static int encode_base62(int bit_cnt, const char* bit_pt, char* base62_str_pt) {
   char* base62_start = base62_str_pt;
 
@@ -464,6 +469,84 @@ static int decode_set(const char* str, unsigned* hash_arr) {
   return cnt;
 }
 
+// Special decode_set version with LRU caching.
+static int cache_decode_set(const char* str, const unsigned** hash_pt) {
+  struct cache_ent {
+    char* str;
+    int len;
+    int cnt;
+    unsigned* hash_arr;
+  };
+
+  static int cache_cnt;
+  static unsigned cache_arr[CACHE_SIZE];
+  static struct cache_ent* ent_arr[CACHE_SIZE];
+
+  struct cache_ent* ent;
+  unsigned fp = str[0] | (str[2] << 8) | (str[3] << 16);
+
+  int i = 0;
+  for (unsigned* cache_pt = cache_arr; cache_pt < cache_arr + cache_cnt; ++cache_pt, ++i) {
+    if (fp == *cache_pt) {
+      ent = ent_arr[i];
+
+      if (memcmp(str, ent->str, ent->len + 1) == 0) {
+        // hit, move to front
+        if (i) {
+          memmove(cache_arr + 1, cache_arr, i * sizeof(cache_arr[0]));
+          memmove(ent_arr + 1, ent_arr, i * sizeof(ent_arr[0]));
+
+          cache_arr[0] = fp;
+          ent_arr[0] = ent;
+        }
+
+        *hash_pt = ent->hash_arr;
+
+        return ent->cnt;
+      }
+    }
+  }
+
+  // decode
+  int len = strlen(str);
+  int cnt = decode_set_size(str);
+  ent = xmalloc(sizeof(*ent) + len + 1 + (cnt + SENTINELS) * sizeof(unsigned));
+  ent->hash_arr = (unsigned*)(ent + 1);
+  ent->str = (char*)(ent->hash_arr + cnt + SENTINELS);
+
+  cnt = ent->cnt = decode_set(str, ent->hash_arr);
+  if (cnt <= 0) {
+    _free(ent);
+    return cnt;
+  }
+
+  for (i = 0; i < SENTINELS; ++i) {
+    ent->hash_arr[cnt + i] = ~0u;
+  }
+
+  memcpy(ent->str, str, len + 1);
+  ent->len = len;
+
+  // insert
+  if (cache_cnt < CACHE_SIZE) {
+    i = cache_cnt++;
+  } else {
+    // free last entry
+    free(ent_arr[CACHE_SIZE - 1]);
+
+    // position at midpoint
+    i = PIVOT_SIZE;
+    memmove(cache_arr + i + 1, cache_arr + i, (CACHE_SIZE - i - 1) * sizeof(cache_arr[0]));
+    memmove(ent_arr + i + 1, ent_arr + i, (CACHE_SIZE - i - 1) * sizeof(ent_arr[0]));
+  }
+
+  cache_arr[i] = fp;
+  ent_arr[i] = ent;
+  *hash_pt = ent->hash_arr;
+
+  return cnt;
+}
+
 // Reduce a set of (bpp + 1) values to a set of bpp values.
 static int downsample_set(int cnt, const unsigned* hash_pt, unsigned* ds_pt, int bpp) {
   unsigned mask = (1 << bpp) - 1;
@@ -527,6 +610,42 @@ static int downsample_set(int cnt, const unsigned* hash_pt, unsigned* ds_pt, int
   return ds_pt - ds_start;
 }
 
+static unsigned* gallop_lower_bound(unsigned* first, const unsigned* last, unsigned value) {
+  size_t n = (size_t)(last - first);
+
+  if (n == 0 || first[0] >= value) {
+    return first;
+  }
+
+  size_t lo = 0;
+  size_t hi = 1;
+
+  while (hi < n && first[hi] < value) {
+    lo = hi;
+
+    if (hi > n / 2) {
+      hi = n;
+      break;
+    }
+
+    hi *= 2;
+  }
+
+  size_t left = lo + 1;
+  size_t right = hi < n ? hi + 1 : n;
+
+  while (left < right) {
+    size_t mid = left + (right - left) / 2;
+
+    if (first[mid] < value)
+      left = mid + 1;
+    else
+      right = mid;
+  }
+
+  return first + left;
+}
+
 // main API routine
 int rpmsetcmp(const char* str1, const char* str2) {
   if (strncmp(str1, "set:", 4) == 0) str1 += 4;
@@ -584,16 +703,29 @@ int rpmsetcmp(const char* str1, const char* str2) {
   const unsigned* end2 = hash_arr2 + cnt2;
 
   while (hash_arr1 < end1 && hash_arr2 < end2) {
-    if (*hash_arr1 < *hash_arr2) {
-      le = 0;
-      hash_arr1++;
-    } else if (*hash_arr2 < *hash_arr1) {
+    if (*hash_arr2 < *hash_arr1) {
       ge = 0;
-      hash_arr2++;
+      ++hash_arr2;
+    } else if (*hash_arr1 == *hash_arr2) {
+      ++hash_arr1;
+      ++hash_arr2;
     } else {
-      hash_arr1++;
-      hash_arr2++;
+      le = 0;
+
+      hash_arr1 = gallop_lower_bound(hash_arr1, end1, *hash_arr2);
+
+      if (hash_arr1 == end1) break;
+
+      if (*hash_arr1 == *hash_arr2) {
+        ++hash_arr1;
+        ++hash_arr2;
+      } else {
+        ge = 0;
+        ++hash_arr2;
+      }
     }
+
+    if (!ge && !le) break;
   }
 
   if (hash_arr1 < end1) {
