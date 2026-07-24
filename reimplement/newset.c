@@ -1,10 +1,14 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 
 #include "rpmlib.h"
-#include "stdint.h"
-#include "stdio.h"
+#ifdef SELF_TEST
+#undef NDEBUG
+#include <stdio.h>
+#endif
+#include "set.h"
 #include "system.h"
 
 #define CACHE_SIZE 256
@@ -343,16 +347,27 @@ static int char_to_num(char c) {
   return 0xee;  // invalid character
 }
 
-// надо посмотреть, насколько в действительности это делает хуже
-static char* putnbits(int n, int c, char* bit_pt) {
-  for (int i = 0; i < n; ++i) {
-    *bit_pt++ = (c >> i) & 1;
-  }
+static char* put6bits(int c, char* bit_pt) {
+  *bit_pt++ = (c >> 0) & 1;
+  *bit_pt++ = (c >> 1) & 1;
+  *bit_pt++ = (c >> 2) & 1;
+  *bit_pt++ = (c >> 3) & 1;
+  *bit_pt++ = (c >> 4) & 1;
+  *bit_pt++ = (c >> 5) & 1;
 
   return bit_pt;
 }
 
-// Main base62 decoding routine: unpack base62 string into bitv[].
+static char* put4bits(int c, char* bit_pt) {
+  *bit_pt++ = (c >> 0) & 1;
+  *bit_pt++ = (c >> 1) & 1;
+  *bit_pt++ = (c >> 2) & 1;
+  *bit_pt++ = (c >> 3) & 1;
+
+  return bit_pt;
+}
+
+// Main base62 decoding routine: unpack base62 string into bit_pt[].
 static int decode_base62(const char* base62_str, char* bit_pt) {
   char* bit_start = bit_pt;
 
@@ -361,7 +376,7 @@ static int decode_base62(const char* base62_str, char* bit_pt) {
     if (num6b == 0xee) return -1;
 
     if (num6b < 61) {
-      bit_pt = putnbits(6, num6b, bit_pt);
+      bit_pt = put6bits(num6b, bit_pt);
     } else {
       assert(num6b == 61);
       // 61 62 63 cases
@@ -375,8 +390,8 @@ static int decode_base62(const char* base62_str, char* bit_pt) {
       num4b &= ~mask;            // low bits
       assert(num2b != mask);     // not both bits set
 
-      bit_pt = putnbits(6, 61 + (num2b >> 4), bit_pt);  // 61 + (0|1|2) in high bits
-      bit_pt = putnbits(4, num4b, bit_pt);
+      bit_pt = put6bits(61 + (num2b >> 4), bit_pt);  // 61 + (0|1|2) in high bits
+      bit_pt = put4bits(num4b, bit_pt);
     }
 
     num6b = char_to_num(*base62_str++);
@@ -510,13 +525,13 @@ static int cache_decode_set(const char* str, const unsigned** hash_pt) {
   // decode
   int len = strlen(str);
   int cnt = decode_set_size(str);
-  ent = xmalloc(sizeof(*ent) + len + 1 + (cnt + SENTINELS) * sizeof(unsigned));
+  ent = malloc(sizeof(*ent) + len + 1 + (cnt + SENTINELS) * sizeof(unsigned));
   ent->hash_arr = (unsigned*)(ent + 1);
   ent->str = (char*)(ent->hash_arr + cnt + SENTINELS);
 
   cnt = ent->cnt = decode_set(str, ent->hash_arr);
   if (cnt <= 0) {
-    _free(ent);
+    free(ent);
     return cnt;
   }
 
