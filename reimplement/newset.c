@@ -293,7 +293,7 @@ const char* set_fini(struct set* set, int bpp) {
             set->symbols_v[i + 1].str);
   }
 
-  int unique_hash[set->cnt];
+  unsigned unique_hash[set->cnt];
   size_t unique_cnt = 0;
 
   // delete duplicates
@@ -326,7 +326,7 @@ static int decode_set_check(const char* str) {
   if (Mshift >= bpp) return -3;
 
   // no empty sets for now
-  if (*str == '\0') return -4;
+  if (*(str + 2) == '\0') return -4;
 
   return 0;
 }
@@ -525,13 +525,13 @@ static int cache_decode_set(const char* str, const unsigned** hash_pt) {
   // decode
   int len = strlen(str);
   int cnt = decode_set_size(str);
-  ent = malloc(sizeof(*ent) + len + 1 + (cnt + SENTINELS) * sizeof(unsigned));
+  ent = xmalloc(sizeof(*ent) + len + 1 + (cnt + SENTINELS) * sizeof(unsigned));
   ent->hash_arr = (unsigned*)(ent + 1);
   ent->str = (char*)(ent->hash_arr + cnt + SENTINELS);
 
   cnt = ent->cnt = decode_set(str, ent->hash_arr);
   if (cnt <= 0) {
-    free(ent);
+    _free(ent);
     return cnt;
   }
 
@@ -670,12 +670,11 @@ int rpmsetcmp(const char* str1, const char* str2) {
   if (decode_set_check(str2) < 0) return -4;
 
   // decode set1
-  int cnt1 = decode_set_size(str1);
-  unsigned bufA1[cnt1];
-  unsigned bufB1[cnt1];
-  unsigned* hash_arr1 = bufA1;
-  cnt1 = decode_set(str1, hash_arr1);
+  const unsigned* hash_arr1 = NULL;
+  int cnt1 = cache_decode_set(str1, &hash_arr1);
   if (cnt1 < 0) return -3;
+  unsigned bufA1[cnt1 + SENTINELS];
+  unsigned bufB1[cnt1 + SENTINELS];
 
   // decode set2
   int cnt2 = decode_set_size(str2);
