@@ -9,10 +9,6 @@ RESULT_DIR="$HOME/res"
 RUNS=3
 CPU=0
 RESET_WORK=1  # 0 — продолжить готовые сборки, 1 — начать всё заново.
-COLLECT_PERF=1
-PERF_RECORD=1  # Отдельный профильный прогон; не входит в среднее время.
-PERF_FREQUENCY=99
-PERF_EVENTS='task-clock,context-switches,cpu-migrations,page-faults,minor-faults,major-faults,cycles,instructions,branches,branch-misses,cache-references,cache-misses,L1-dcache-loads,L1-dcache-load-misses,LLC-loads,LLC-load-misses'
 PACKAGER='krosh <gudovdo@my.msu.ru>'
 APT_SOURCE=/etc/apt/sources.list.d/alt.list
 APT_GET=/usr/lib/apt/apt-get
@@ -93,34 +89,19 @@ operation_label()
 
 run_once()
 {
-    local operation=$1 variant=$2 run=$3 start end status perf_stat
+    local operation=$1 variant=$2 run=$3 start end status
     local libdir="$variant/lib/usr/lib64"
     local root="$COMMON/root"
     local raw="$variant/raw"
-    local -a command
 
     operation_args "$operation"
     apt_options "$root"
-    command=("$APT_GET" -q "${APT_OPTIONS[@]}" "${ARGS[@]}")
-
-    if ((COLLECT_PERF)); then
-        perf_stat="$raw/perf-stat/$operation.$run.tsv"
-        command=(
-            perf stat
-            --all-user
-            --no-big-num
-            -x $'\t'
-            -o "$perf_stat"
-            -e "$PERF_EVENTS"
-            --
-            "${command[@]}"
-        )
-    fi
 
     start=$(date +%s%N)
     if env LC_ALL=C APT_CONFIG="$COMMON/apt.conf" \
         LD_LIBRARY_PATH="$libdir" \
-        taskset -c "$CPU" "${command[@]}" \
+        taskset -c "$CPU" "$APT_GET" -q \
+        "${APT_OPTIONS[@]}" "${ARGS[@]}" \
         >"$raw/$operation.$run.stdout" \
         2>"$raw/$operation.$run.stderr"; then
         status=0
@@ -134,78 +115,9 @@ run_once()
     RUN_STATUS=$status
 }
 
-append_perf_stat()
-{
-    local operation=$1 run=$2 raw_file=$3 result_file=$4 label
-
-    label=$(operation_label "$operation")
-    awk -F '\t' -v OFS='\t' -v operation="$label" -v run="$run" '
-        /^[[:space:]]*#/ || NF < 3 { next }
-        { print operation, run, $1, $2, $3, $4, $5, $6, $7, $8 }
-    ' "$raw_file" >>"$result_file"
-}
-
-record_profile()
-{
-    local operation=$1 variant=$2 perf_dir=$3 status data report
-    local libdir="$variant/lib/usr/lib64"
-    local root="$COMMON/root"
-    local -a command
-
-    operation_args "$operation"
-    apt_options "$root"
-    data="$perf_dir/$operation.perf.data"
-    report="$perf_dir/$operation.report.txt"
-    command=("$APT_GET" -q "${APT_OPTIONS[@]}" "${ARGS[@]}")
-
-    if env LC_ALL=C APT_CONFIG="$COMMON/apt.conf" \
-        LD_LIBRARY_PATH="$libdir" \
-        taskset -c "$CPU" perf \
-        --buildid-dir "$perf_dir/buildid-cache" \
-        record \
-        --all-user \
-        --quiet \
-        --freq "$PERF_FREQUENCY" \
-        --event cycles \
-        --call-graph dwarf,8192 \
-        --output "$data" \
-        -- "${command[@]}" \
-        >"$perf_dir/$operation.stdout" \
-        2>"$perf_dir/$operation.stderr"; then
-        status=0
-    else
-        status=$?
-    fi
-
-    printf '%s\n' "$status" >"$perf_dir/$operation.status"
-    if [[ -s $data ]]; then
-        perf --buildid-dir "$perf_dir/buildid-cache" report \
-            --stdio \
-            --no-children \
-            --percent-limit 0.5 \
-            --sort comm,dso,symbol \
-            --input "$data" \
-            >"$report" \
-            2>"$perf_dir/$operation.report.stderr" || true
-    fi
-}
-
-prepare_perf_symbols()
-{
-    local perf_dir=$1 debug_file=$2 debuginfo_rpm=$3
-
-    mkdir -p "$perf_dir/buildid-cache"
-    cp -a "$debuginfo_rpm" "$perf_dir/"
-    perf --buildid-dir "$perf_dir/buildid-cache" buildid-cache \
-        --add "$debug_file" \
-        >"$perf_dir/buildid-cache.stdout" \
-        2>"$perf_dir/buildid-cache.stderr"
-}
-
 benchmark_variant()
 {
-    local variant=$1 result=$2 debug_file=$3 debuginfo_rpm=$4
-    local operation run average label status_text perf_result perf_dir
+    local variant=$1 result=$2 operation run average label status_text
     local -a times statuses
     local -a operations=(
         check
@@ -217,20 +129,9 @@ benchmark_variant()
         dist-upgrade
     )
 
-    mkdir -p "$variant/raw/perf-stat"
+    mkdir -p "$variant/raw"
     printf 'command\taverage_seconds\trun1_seconds\trun2_seconds\trun3_seconds\texit_status\n' \
         >"$result"
-    perf_result=${result%.tsv}.perf-stat.tsv
-    perf_dir=${result%.tsv}.perf
-    if ((COLLECT_PERF)); then
-        printf 'command\trun\tvalue\tunit\tevent\tcounter_runtime\trunning_percent\tmetric_value\tmetric_unit\textra\n' \
-            >"$perf_result"
-        if ((PERF_RECORD)); then
-            rm -rf "$perf_dir"
-            mkdir -p "$perf_dir"
-            prepare_perf_symbols "$perf_dir" "$debug_file" "$debuginfo_rpm"
-        fi
-    fi
 
     for operation in "${operations[@]}"; do
         times=()
@@ -240,10 +141,6 @@ benchmark_variant()
             run_once "$operation" "$variant" "$run"
             times+=("$RUN_TIME")
             statuses+=("$RUN_STATUS")
-            if ((COLLECT_PERF)); then
-                append_perf_stat "$operation" "$run" \
-                    "$variant/raw/perf-stat/$operation.$run.tsv" "$perf_result"
-            fi
             printf '%s: run %d/%d: %ss, status=%s\n' \
                 "$operation" "$run" "$RUNS" "$RUN_TIME" "$RUN_STATUS"
         done
@@ -264,24 +161,13 @@ benchmark_variant()
             "$label" "$average" \
             "${times[0]}" "${times[1]}" "${times[2]}" "$status_text" \
             >>"$result"
-
-        if ((COLLECT_PERF && PERF_RECORD)); then
-            printf '%s: perf record\n' "$operation"
-            record_profile "$operation" "$variant" "$perf_dir"
-        fi
     done
 }
 
 for command in git gear-hsh hsh rpm rpmquery rpm2cpio cpio apt-get apt-cache \
-    taskset awk sed date sha256sum ldd readelf; do
+    taskset awk sed date sha256sum ldd; do
     command -v "$command" >/dev/null || fail "required command not found: $command"
 done
-if ((COLLECT_PERF)); then
-    command -v perf >/dev/null || \
-        fail "perf is not installed; install the ALT package: apt-get install perf"
-    perf stat --all-user -e task-clock -- true >/dev/null 2>&1 || \
-        fail 'perf events are unavailable; set kernel.perf_event_paranoid=2 or lower'
-fi
 [[ -x $APT_GET ]] || fail "not found: $APT_GET"
 [[ $RUNS -eq 3 ]] || fail 'RUNS must stay equal to 3 for the TSV format below'
 
@@ -405,16 +291,7 @@ for setc in "${setc_files[@]}"; do
     ((${#librpm_rpms[@]} == 1)) || \
         fail "expected one librpm7 package for $filename, got ${#librpm_rpms[@]}"
 
-    debug_file=
-    debuginfo_rpm=
-    if ((COLLECT_PERF && PERF_RECORD)); then
-        debuginfo_rpms=("$repo"/librpm7-debuginfo-[0-9]*".$suffix".x86_64.rpm)
-        ((${#debuginfo_rpms[@]} == 1)) || \
-            fail "expected one librpm7-debuginfo package for $filename, got ${#debuginfo_rpms[@]}"
-        debuginfo_rpm=${debuginfo_rpms[0]}
-    fi
-
-    rm -rf "$variant/lib" "$variant/debug"
+    rm -rf "$variant/lib"
     mkdir -p "$variant/lib"
     (
         cd "$variant/lib"
@@ -428,25 +305,7 @@ for setc in "${setc_files[@]}"; do
         grep -F "$libdir/librpm.so.7" >/dev/null || \
         fail "apt-get does not load the built librpm for $filename"
 
-    if ((COLLECT_PERF && PERF_RECORD)); then
-        mkdir -p "$variant/debug"
-        (
-            cd "$variant/debug"
-            rpm2cpio "$debuginfo_rpm" | cpio -idm --quiet
-        )
-        debug_file="$variant/debug/usr/lib/debug/usr/lib64/librpm.so.7.debug"
-        [[ -e $debug_file ]] || fail "librpm debuginfo was not extracted for $filename"
-
-        main_build_id=$(readelf -n "$libdir/librpm.so.7" | \
-            awk '/Build ID:/ { print $3; exit }')
-        debug_build_id=$(readelf -n "$debug_file" | \
-            awk '/Build ID:/ { print $3; exit }')
-        [[ -n $main_build_id && $main_build_id == "$debug_build_id" ]] || \
-            fail "librpm/debuginfo Build ID mismatch for $filename"
-    fi
-
-    benchmark_variant "$variant" "$RESULT_DIR/$result_name" \
-        "$debug_file" "$debuginfo_rpm"
+    benchmark_variant "$variant" "$RESULT_DIR/$result_name"
 done
 
 printf '\nResults:\n'
