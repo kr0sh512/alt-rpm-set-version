@@ -1,0 +1,935 @@
+#include <assert.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+
+#include "rpmlib.h"
+#ifdef SELF_TEST
+#undef NDEBUG
+#include <stdio.h>
+#endif
+#include "set.h"
+#include "system.h"
+
+#define CACHE_SIZE 512
+#define PIVOT_SIZE 486
+
+struct set {
+  size_t cnt;
+  size_t symbols_cap;
+  size_t strings_len;
+  size_t strings_cap;
+  char* strings;
+  struct symbols {
+    size_t offset;
+    unsigned hash;
+  }* symbols_v;
+};
+
+struct set* set_new() {
+  struct set* set = xmalloc(sizeof *set);
+  set->cnt = 0;
+  set->symbols_cap = 0;
+  set->strings_len = 0;
+  set->strings_cap = 0;
+  set->strings = NULL;
+  set->symbols_v = NULL;
+
+  return set;
+}
+
+void set_add(struct set* set, const char* sym) {
+  if (set->cnt == set->symbols_cap) {
+    set->symbols_cap += 1024;
+    set->symbols_v = xrealloc(set->symbols_v, sizeof(*set->symbols_v) * set->symbols_cap);
+  }
+
+  size_t length = strlen(sym) + 1;
+  size_t required = set->strings_len + length;
+  if (required > set->strings_cap) {
+    size_t capacity = set->strings_cap ? set->strings_cap : 4096;
+    while (capacity < required) capacity *= 2;
+
+    set->strings = xrealloc(set->strings, capacity);
+    set->strings_cap = capacity;
+  }
+
+  set->symbols_v[set->cnt].offset = set->strings_len;
+  set->symbols_v[set->cnt].hash = 0;
+  memcpy(set->strings + set->strings_len, sym, length);
+  set->strings_len = required;
+  set->cnt++;
+
+  return;
+}
+
+struct set* set_free(struct set* set) {
+  if (set) {
+    _free(set->strings);
+    _free(set->symbols_v);
+    set = _free(set);
+  }
+
+  return NULL;
+}
+
+// ---
+
+static unsigned hash(const char* str) {
+  unsigned hash = 0x9e3779b9;
+  const unsigned char* p = (const unsigned char*)str;
+
+  while (*p) {
+    hash += *p++;
+    hash += (hash << 10);
+    hash ^= (hash >> 6);
+  }
+
+  hash += (hash << 3);
+  hash ^= (hash >> 11);
+  hash += (hash << 15);
+
+  return hash;
+}
+
+int cmp(const void* arg1, const void* arg2) {
+  const struct symbols* s1 = arg1;
+  const struct symbols* s2 = arg2;
+
+  if (s1->hash > s2->hash) return 1;
+  if (s2->hash > s1->hash) return -1;
+
+  return 0;
+}
+
+static void sort_symbols(struct symbols* values, size_t count, int bpp) {
+  if (count < 128) {
+    qsort(values, count, sizeof(*values), cmp);
+    return;
+  }
+
+  struct symbols temporary[count];
+  struct symbols* source = values;
+  struct symbols* destination = temporary;
+  unsigned passes = ((unsigned)bpp + 7) / 8;
+
+  for (unsigned pass = 0; pass < passes; ++pass) {
+    size_t offsets[256] = {0};
+    unsigned shift = pass * 8;
+    for (size_t i = 0; i < count; ++i) ++offsets[(source[i].hash >> shift) & 0xffu];
+
+    size_t position = 0;
+    for (size_t i = 0; i < 256; ++i) {
+      size_t bucket_count = offsets[i];
+      offsets[i] = position;
+      position += bucket_count;
+    }
+
+    for (size_t i = 0; i < count; ++i) {
+      unsigned bucket = (source[i].hash >> shift) & 0xffu;
+      destination[offsets[bucket]++] = source[i];
+    }
+
+    struct symbols* swap = source;
+    source = destination;
+    destination = swap;
+  }
+
+  if (source != values) memcpy(values, source, count * sizeof(*values));
+
+  return;
+}
+
+// ---
+
+static int log2i(int n) {
+  int m = 0;
+  while (n /= 2) m++;
+
+  return m;
+}
+
+// Calculate Mshift paramter for encoding.
+static int encode_golomb_Mshift(int cnt, int bpp) {
+  // XXX Slightly better Mshift estimations are probably possible.
+  // Recheck "Compression and coding algorithms" by Moffat & Turpin.
+  int Mshift = bpp - log2i(cnt) - 1;
+
+  // Adjust out-of-range values.
+  Mshift = (Mshift < 7) ? 7 : Mshift;
+  Mshift = (Mshift > 31) ? 31 : Mshift;
+  assert(Mshift < bpp);
+
+  return Mshift;
+}
+
+// Estimate how many bits can be filled up.
+static inline int encode_golomb_size(int cnt, int Mshift) {
+  // XXX No precise estimation.  However, we do not expect unary-encoded bits
+  // to take more than binary-encoded Mshift bits.
+  return Mshift * 2 * cnt + 16;
+}
+
+// Estimate base62 buffer size required to encode a given number of bits.
+static inline int encode_base62_size(int bit_cnt) {
+  // In the worst case, which is ZxZxZx..., five bits can make a character;
+  // the remaining bits can make a character, too.  And the string must be
+  // null-terminated.
+  return bit_cnt / 5 + 2;
+}
+
+static int encode_set_size(int cnt, int bpp) {
+  int Mshift = encode_golomb_Mshift(cnt, bpp);
+  int bit_cnt = encode_golomb_size(cnt, Mshift);
+  // two leading characters are special
+  return 2 + encode_base62_size(bit_cnt);
+}
+
+// ---
+
+// Main base62 encoding routine: pack bit_arr into base62 string.
+/*
+ * Base62 routines - encode bits with alnum characters.
+ *
+ * This is a base64-based base62 implementation.  Values 0..61 are encoded
+ * with '0'..'9', 'a'..'z', and 'A'..'Z'.  However, 'Z' is special: it will
+ * also encode 62 and 63.  To achieve this, 'Z' will occupy two high bits in
+ * the next character.  Thus 'Z' can be interpreted as an escape character
+ * (which indicates that the next character must be handled specially).
+ * Note that setting high bits to "00", "01" or "10" cannot contribute
+ * to another 'Z' (which would require high bits set to "11").  This is
+ * how multiple escapes are avoided.
+ */
+
+static char* bits_to_char(int c, char* base62) {
+  assert(c >= 0 && c <= 61);
+
+  if (c < 10) {
+    *base62++ = c + '0';
+  } else if (c < 36) {
+    *base62++ = c - 10 + 'a';
+  } else if (c < 62) {
+    *base62++ = c - 36 + 'A';
+  }
+
+  return base62;
+}
+
+// ---
+
+static inline char encode_bpp(int bpp) { return bpp - 7 + 'a'; }
+
+struct encode_writer {
+  uint64_t bits;
+  unsigned filled;
+  unsigned escaped;
+  unsigned pending_high;
+  char* output;
+};
+
+static inline void encode_writer_digit(struct encode_writer* writer, unsigned value) {
+  assert(value < 62);
+
+  if (value < 10) {
+    *writer->output++ = (char)('0' + value);
+  } else if (value < 36) {
+    *writer->output++ = (char)('a' + value - 10);
+  } else {
+    *writer->output++ = (char)('A' + value - 36);
+  }
+}
+
+static inline void encode_writer_flush(struct encode_writer* writer) {
+  for (;;) {
+    unsigned width = writer->escaped ? 4u : 6u;
+    if (writer->filled < width) return;
+
+    unsigned value = (unsigned)writer->bits & ((1u << width) - 1);
+    writer->bits >>= width;
+    writer->filled -= width;
+
+    if (writer->escaped) {
+      encode_writer_digit(writer, writer->pending_high | value);
+      writer->escaped = 0;
+    } else if (value >= 61) {
+      encode_writer_digit(writer, 61);
+      writer->pending_high = (value - 61) << 4;
+      writer->escaped = 1;
+    } else {
+      encode_writer_digit(writer, value);
+    }
+  }
+}
+
+static inline void encode_writer_zeros(struct encode_writer* writer, unsigned count) {
+  while (count) {
+    unsigned take = count > 56 ? 56 : count;
+    writer->filled += take;
+    count -= take;
+
+    encode_writer_flush(writer);
+  }
+
+  return;
+}
+
+static inline void encode_writer_put(struct encode_writer* writer, uint64_t value, unsigned width) {
+  writer->bits |= value << writer->filled;
+  writer->filled += width;
+  encode_writer_flush(writer);
+
+  return;
+}
+
+static int encode_set(int cnt, const unsigned* hash_arr, int bpp, char* base62_str) {
+  const unsigned Mshift = (unsigned)encode_golomb_Mshift(cnt, bpp);
+  const unsigned mask = (1u << Mshift) - 1;
+  char* const start = base62_str;
+  unsigned previous = 0;
+
+  *base62_str++ = encode_bpp(bpp);
+  *base62_str++ = encode_bpp((int)Mshift);
+  struct encode_writer writer = {.output = base62_str};
+
+  for (int i = 0; i < cnt; ++i) {
+    unsigned current = hash_arr[i];
+    unsigned delta = current - previous;
+    previous = current;
+
+    encode_writer_zeros(&writer, delta >> Mshift);
+    encode_writer_put(&writer, 1, 1);
+    encode_writer_put(&writer, delta & mask, Mshift);
+  }
+
+  encode_writer_flush(&writer);
+  if (writer.filled || writer.escaped) {
+    unsigned value = (unsigned)writer.bits;
+    if (writer.escaped) value |= writer.pending_high;
+    encode_writer_digit(&writer, value);
+  }
+
+  *writer.output = '\0';
+
+  return (int)(writer.output - start);
+}
+
+const char* set_fini(struct set* set, int bpp) {
+  // Implementation for finalizing the set
+
+  assert(set != NULL);
+  assert(set->cnt > 0);
+  assert(bpp >= 10 && bpp <= 32);
+
+  unsigned mask = (bpp < 32) ? (1u << bpp) - 1 : ~0u;
+
+  for (size_t i = 0; i < set->cnt; ++i) {
+    set->symbols_v[i].hash = hash(set->strings + set->symbols_v[i].offset) & mask;
+  }
+
+  sort_symbols(set->symbols_v, set->cnt, bpp);
+
+  // warn on hash collizions
+  for (size_t i = 0; i < set->cnt - 1; ++i) {
+    if (set->symbols_v[i].hash != set->symbols_v[i + 1].hash) continue;
+    const char* left = set->strings + set->symbols_v[i].offset;
+    const char* right = set->strings + set->symbols_v[i + 1].offset;
+    if (!strcmp(left, right)) continue;
+
+    fprintf(stderr, "warning: hash collision: %s %s\n", left, right);
+  }
+
+  unsigned unique_hash[set->cnt];
+  size_t unique_cnt = 0;
+
+  // delete duplicates
+  for (size_t i = 0; i < set->cnt; ++i) {
+    while (i + 1 < set->cnt && set->symbols_v[i].hash == set->symbols_v[i + 1].hash) {
+      ++i;
+    }
+    unique_hash[unique_cnt++] = set->symbols_v[i].hash;
+  }
+
+  char base62_str[encode_set_size(unique_cnt, bpp)];
+  encode_set(unique_cnt, unique_hash, bpp, base62_str);
+
+  return xstrdup(base62_str);
+}
+
+// ---
+
+struct set_meta {
+  const char* str;
+  const char* payload;
+  size_t len;
+  size_t payload_len;
+  int bpp;
+  int Mshift;
+  int bit_capacity;
+  int value_capacity;
+};
+
+static int set_meta_init(const char* str, struct set_meta* meta) {
+  // len >= 3
+  if (!str[0] || !str[1] || !str[2]) return -4;
+
+  int bpp = str[0] + 7 - 'a';
+  if (bpp < 10 || bpp > 32) return -1;
+
+  int Mshift = str[1] + 7 - 'a';
+  if (Mshift < 7 || Mshift > 31) return -2;
+  if (Mshift >= bpp) return -3;
+
+  *meta = (struct set_meta){
+      .str = str,
+      .payload = str + 2,
+      .bpp = bpp,
+      .Mshift = Mshift,
+  };
+
+  return 0;
+}
+
+static int set_meta_fini(struct set_meta* meta) {
+  size_t len = strlen(meta->str);
+
+  size_t payload_len = len - 2;
+
+  int bit_capacity = (int)payload_len * 6;
+  int value_capacity = bit_capacity / (meta->Mshift + 1);
+
+  if (value_capacity < 1) return -4;
+
+  meta->len = len;
+  meta->payload_len = payload_len;
+  meta->bit_capacity = bit_capacity;
+  meta->value_capacity = value_capacity;
+
+  return 0;
+}
+// UCHAR_MAX == 255
+static const unsigned char char_to_num[255 + 1] = {[0] = 0xff, /* конец строки */
+
+                                                   [1 ...('0' - 1)] = 0xee,
+
+                                                   ['0'] = 0,
+                                                   ['1'] = 1,
+                                                   ['2'] = 2,
+                                                   ['3'] = 3,
+                                                   ['4'] = 4,
+                                                   ['5'] = 5,
+                                                   ['6'] = 6,
+                                                   ['7'] = 7,
+                                                   ['8'] = 8,
+                                                   ['9'] = 9,
+
+                                                   [('9' + 1)...('A' - 1)] = 0xee,
+
+                                                   ['A'] = 36,
+                                                   ['B'] = 37,
+                                                   ['C'] = 38,
+                                                   ['D'] = 39,
+                                                   ['E'] = 40,
+                                                   ['F'] = 41,
+                                                   ['G'] = 42,
+                                                   ['H'] = 43,
+                                                   ['I'] = 44,
+                                                   ['J'] = 45,
+                                                   ['K'] = 46,
+                                                   ['L'] = 47,
+                                                   ['M'] = 48,
+                                                   ['N'] = 49,
+                                                   ['O'] = 50,
+                                                   ['P'] = 51,
+                                                   ['Q'] = 52,
+                                                   ['R'] = 53,
+                                                   ['S'] = 54,
+                                                   ['T'] = 55,
+                                                   ['U'] = 56,
+                                                   ['V'] = 57,
+                                                   ['W'] = 58,
+                                                   ['X'] = 59,
+                                                   ['Y'] = 60,
+                                                   ['Z'] = 61,
+
+                                                   [('Z' + 1)...('a' - 1)] = 0xee,
+
+                                                   ['a'] = 10,
+                                                   ['b'] = 11,
+                                                   ['c'] = 12,
+                                                   ['d'] = 13,
+                                                   ['e'] = 14,
+                                                   ['f'] = 15,
+                                                   ['g'] = 16,
+                                                   ['h'] = 17,
+                                                   ['i'] = 18,
+                                                   ['j'] = 19,
+                                                   ['k'] = 20,
+                                                   ['l'] = 21,
+                                                   ['m'] = 22,
+                                                   ['n'] = 23,
+                                                   ['o'] = 24,
+                                                   ['p'] = 25,
+                                                   ['q'] = 26,
+                                                   ['r'] = 27,
+                                                   ['s'] = 28,
+                                                   ['t'] = 29,
+                                                   ['u'] = 30,
+                                                   ['v'] = 31,
+                                                   ['w'] = 32,
+                                                   ['x'] = 33,
+                                                   ['y'] = 34,
+                                                   ['z'] = 35,
+
+                                                   [('z' + 1)... 255] = 0xee};
+
+static char* put6bits(int c, char* bit_pt) {
+  *bit_pt++ = (c >> 0) & 1;
+  *bit_pt++ = (c >> 1) & 1;
+  *bit_pt++ = (c >> 2) & 1;
+  *bit_pt++ = (c >> 3) & 1;
+  *bit_pt++ = (c >> 4) & 1;
+  *bit_pt++ = (c >> 5) & 1;
+
+  return bit_pt;
+}
+
+static char* put4bits(int c, char* bit_pt) {
+  *bit_pt++ = (c >> 0) & 1;
+  *bit_pt++ = (c >> 1) & 1;
+  *bit_pt++ = (c >> 2) & 1;
+  *bit_pt++ = (c >> 3) & 1;
+
+  return bit_pt;
+}
+
+// Decode base62 and Golomb-Rice in one pass. Base62 is LSB-first; a Z escape contributes 10 stream
+// bits.
+static inline int decode_chunk(const unsigned char** input, uint64_t* chunk, unsigned* width) {
+  unsigned value = char_to_num[*(*input)++];
+
+  if (value < 61) {
+    *chunk = value;
+    *width = 6;
+    return 1;
+  }
+  if (value == 0xff) return 0;
+  if (value == 0xee) return -1;
+
+  unsigned escaped = char_to_num[*(*input)++];
+  if (escaped == 0xff) return -2;
+  if (escaped == 0xee) return -3;
+
+  unsigned high = escaped & 0x30u;
+  if (high == 0x30u) return -4;
+
+  *chunk = (61u + (high >> 4)) | ((uint64_t)(escaped & 0x0fu) << 6);
+  *width = 10;
+
+  return 1;
+}
+
+static int decode_set(const struct set_meta* meta, unsigned* hash_arr) {
+  const unsigned char* input = (const unsigned char*)meta->payload;
+  const unsigned Mshift = (unsigned)meta->Mshift;
+  const uint64_t mask = (UINT64_C(1) << Mshift) - 1;
+  uint64_t bits = 0;
+  unsigned filled = 0;
+  unsigned q = 0;
+  unsigned previous = 0;
+  int count = 0;
+
+  for (;;) {
+    // Unary quotient: zero bits terminated by one.
+    for (;;) {
+      if (filled == 0) {
+        uint64_t chunk;
+        unsigned width;
+        int rc = decode_chunk(&input, &chunk, &width);
+
+        if (rc < 0) return rc;
+        if (rc == 0) return q <= 5 ? count : -10;
+
+        bits = chunk;
+        filled = width;
+      }
+
+      if (bits == 0) {
+        q += filled;
+        filled = 0;
+        continue;
+      }
+
+      unsigned zeros = (unsigned)__builtin_ctzll(bits);
+      if (zeros >= filled) {
+        q += filled;
+        bits = 0;
+        filled = 0;
+        continue;
+      }
+
+      q += zeros;
+      bits >>= zeros + 1;
+      filled -= zeros + 1;
+      break;
+    }
+
+    // Fixed-width remainder.  At most 31+10 bits are held at once.
+    while (filled < Mshift) {
+      uint64_t chunk;
+      unsigned width;
+      int rc = decode_chunk(&input, &chunk, &width);
+      if (rc < 0) return rc;
+      if (rc == 0) return -11;
+      bits |= chunk << filled;
+      filled += width;
+    }
+
+    unsigned delta = (q << Mshift) | (unsigned)(bits & mask);
+    bits >>= Mshift;
+    filled -= Mshift;
+    q = 0;
+
+    previous += delta;
+    hash_arr[count++] = previous;
+  }
+}
+
+// Bounded decoded-set cache: bucketed lookup plus O(1) LRU updates.
+static int downsample_set(int cnt, const unsigned* hash_pt, unsigned* ds_pt, int bpp);
+
+static int cache_decode_set(struct set_meta* meta, int target_bpp, const unsigned** hash_pt,
+                            unsigned cache_id) {
+  enum { CACHE_BUCKETS = 1024 };
+  struct cache_ent {
+    struct cache_ent* bucket_next;
+    struct cache_ent* newer;
+    struct cache_ent* older;
+    char* str;
+    unsigned* hash_arr;
+    uint32_t fingerprint;
+    int len;
+    int cnt;
+    int target_bpp;
+  };
+
+  static unsigned cache_count[2];
+  static struct cache_ent* buckets[2][CACHE_BUCKETS];
+  static struct cache_ent* newest[2];
+  static struct cache_ent* oldest[2];
+
+  assert(cache_id < 2);
+
+  const unsigned char* str = (const unsigned char*)meta->str;
+  uint32_t fp = (uint32_t)str[0] | ((uint32_t)str[2] << 8) | ((uint32_t)str[3] << 16);
+  uint32_t mixed = fp ^ ((uint32_t)target_bpp * UINT32_C(0x85ebca6b));
+  mixed ^= mixed >> 11;
+  mixed *= UINT32_C(0x9e3779b1);
+  mixed ^= mixed >> 16;
+  unsigned bucket = mixed & (CACHE_BUCKETS - 1);
+
+  for (struct cache_ent* ent = buckets[cache_id][bucket]; ent; ent = ent->bucket_next) {
+    if (ent->fingerprint != fp || ent->target_bpp != target_bpp || strcmp(meta->str, ent->str) != 0)
+      continue;
+
+    if (ent != newest[cache_id]) {
+      if (ent->newer) ent->newer->older = ent->older;
+      if (ent->older) ent->older->newer = ent->newer;
+      if (ent == oldest[cache_id]) oldest[cache_id] = ent->newer;
+
+      ent->newer = NULL;
+      ent->older = newest[cache_id];
+      newest[cache_id]->newer = ent;
+      newest[cache_id] = ent;
+    }
+
+    *hash_pt = ent->hash_arr;
+
+    return ent->cnt;
+  }
+
+  if (set_meta_fini(meta) < 0) return -4;
+
+  int len = (int)meta->len;
+  int capacity = meta->value_capacity;
+  struct cache_ent* ent = xmalloc(sizeof(*ent) + (size_t)(capacity) * sizeof(unsigned) + len + 1);
+  ent->hash_arr = (unsigned*)(ent + 1);
+  ent->str = (char*)(ent->hash_arr + capacity);
+
+  int cnt = decode_set(meta, ent->hash_arr);
+  if (cnt <= 0) {
+    _free(ent);
+    return cnt;
+  }
+
+  if (target_bpp < meta->bpp) {
+    unsigned temporary[capacity];
+    unsigned* current = ent->hash_arr;
+    unsigned* destination = temporary;
+
+    for (int bpp = meta->bpp - 1; bpp >= target_bpp; --bpp) {
+      cnt = downsample_set(cnt, current, destination, bpp);
+      unsigned* swap = current;
+      current = destination;
+      destination = swap;
+    }
+
+    if (current != ent->hash_arr) {
+      memcpy(ent->hash_arr, current, (size_t)cnt * sizeof(*current));
+    }
+  }
+
+  memcpy(ent->str, meta->str, (size_t)len + 1);
+  ent->fingerprint = fp;
+  ent->len = len;
+  ent->cnt = cnt;
+  ent->target_bpp = target_bpp;
+
+  if (cache_count[cache_id] == CACHE_SIZE) {
+    struct cache_ent* victim = oldest[cache_id];
+    oldest[cache_id] = victim->newer;
+    if (oldest[cache_id]) oldest[cache_id]->older = NULL;
+    if (victim == newest[cache_id]) newest[cache_id] = NULL;
+
+    uint32_t victim_mixed =
+        victim->fingerprint ^ ((uint32_t)victim->target_bpp * UINT32_C(0x85ebca6b));
+    victim_mixed ^= victim_mixed >> 11;
+    victim_mixed *= UINT32_C(0x9e3779b1);
+    victim_mixed ^= victim_mixed >> 16;
+    unsigned victim_bucket = victim_mixed & (CACHE_BUCKETS - 1);
+    struct cache_ent** link = &buckets[cache_id][victim_bucket];
+    while (*link != victim) link = &(*link)->bucket_next;
+    *link = victim->bucket_next;
+    _free(victim);
+  } else {
+    ++cache_count[cache_id];
+  }
+
+  ent->bucket_next = buckets[cache_id][bucket];
+  buckets[cache_id][bucket] = ent;
+  ent->newer = NULL;
+  ent->older = newest[cache_id];
+  if (newest[cache_id]) {
+    newest[cache_id]->newer = ent;
+  } else {
+    oldest[cache_id] = ent;
+  }
+  newest[cache_id] = ent;
+
+  *hash_pt = ent->hash_arr;
+
+  return cnt;
+}
+
+// Reduce a set of (bpp + 1) values to a set of bpp values.
+static int downsample_set(int cnt, const unsigned* hash_pt, unsigned* ds_pt, int bpp) {
+  unsigned mask = (1u << bpp) - 1;
+
+  // find the first element with high bit set
+  int l = 0;
+  int u = cnt;
+  while (l < u) {
+    int i = (l + u) / 2;
+
+    if (hash_pt[i] <= mask) {
+      l = i + 1;
+    } else {
+      u = i;
+    }
+  }
+
+  // initialize parts
+  const unsigned* ds_start = ds_pt;
+  const unsigned *v1 = hash_pt + 0, *v1_end = hash_pt + u;
+  const unsigned *v2 = hash_pt + u, *v2_end = hash_pt + cnt;
+
+  // merge v1 and v2 into w
+  if (v1 < v1_end && v2 < v2_end) {
+    unsigned v1_val = *v1;
+    unsigned v2_val = *v2 & mask;
+
+    while (1) {
+      if (v1_val < v2_val) {
+        *ds_pt++ = v1_val;
+        v1++;
+
+        if (v1 == v1_end) break;
+
+        v1_val = *v1;
+      } else if (v2_val < v1_val) {
+        *ds_pt++ = v2_val;
+        v2++;
+
+        if (v2 == v2_end) break;
+
+        v2_val = *v2 & mask;
+      } else {
+        *ds_pt++ = v1_val;
+        v1++;
+        v2++;
+
+        if (v1 == v1_end) break;
+        if (v2 == v2_end) break;
+
+        v1_val = *v1;
+        v2_val = *v2 & mask;
+      }
+    }
+  }
+
+  // append what's left
+  while (v1 < v1_end) *ds_pt++ = *v1++;
+  while (v2 < v2_end) *ds_pt++ = *v2++ & mask;
+
+  return ds_pt - ds_start;
+}
+
+static const unsigned* step_lower_bound(const unsigned* first, const unsigned* last, unsigned value,
+                                        size_t jump) {
+  const size_t count = (size_t)(last - first);
+
+  if (count == 0 || first[0] >= value) {
+    return first;
+  }
+
+  if (jump == 0) {
+    jump = 1;
+  }
+
+  size_t position = 0;
+  size_t step = jump;
+
+  while (step != 0) {
+    if (step > count - position - 1) {
+      step /= 2;
+      continue;
+    }
+
+    const size_t next = position + step;
+
+    if (first[next] < value) {
+      position = next;
+    } else {
+      step /= 2;
+    }
+  }
+
+  return first + position + 1;
+}
+
+static int sorted_subset(const unsigned* small, size_t small_count, const unsigned* large,
+                         size_t large_count) {
+  const unsigned* const small_end = small + small_count;
+  const unsigned* const large_end = large + large_count;
+  size_t jump = large_count / small_count;
+
+  // Dense sets favor a conventional merge; sparse sets skip by approximately
+  // the mean distance between required values and then refine the last block.
+  if (jump < 4) {
+    while (small < small_end) {
+      unsigned value = *small++;
+      while (large < large_end && *large < value) ++large;
+      if (large == large_end || *large != value) return 0;
+      ++large;
+    }
+
+    return 1;
+  }
+
+  while (small < small_end) {
+    unsigned value = *small++;
+    large = step_lower_bound(large, large_end, value, jump);
+    if (large == large_end || *large != value) return 0;
+    ++large;
+  }
+
+  return 1;
+}
+
+// main API routine
+int rpmsetcmp(const char* str1, const char* str2) {
+  if (strncmp(str1, "set:", 4) == 0) str1 += 4;
+  if (strncmp(str2, "set:", 4) == 0) str2 += 4;
+
+  struct set_meta meta1;
+  struct set_meta meta2;
+
+  if (set_meta_init(str1, &meta1) < 0) return -3;
+  if (set_meta_init(str2, &meta2) < 0) return -4;
+
+  int target_bpp = meta1.bpp < meta2.bpp ? meta1.bpp : meta2.bpp;
+
+  // Decode and cache the first operand at the comparison precision.
+  const unsigned* hash_arr1 = NULL;
+  int cnt1 = cache_decode_set(&meta1, target_bpp, &hash_arr1, 0);
+  if (cnt1 < 0) return -3;
+
+  // Metadata for both operands has already been validated, and set1 has been
+  // decoded, so this preserves set8's malformed-input error precedence.
+  if (str1 == str2 || strcmp(str1, str2) == 0) return 0;
+
+  // Requirement sets are frequently reused by dependency solvers too.
+  const unsigned* hash_arr2 = NULL;
+  int cnt2 = cache_decode_set(&meta2, target_bpp, &hash_arr2, 1);
+  if (cnt2 < 0) return -4;
+
+  // Cardinality determines which strict-inclusion result is even possible.
+  // For equal cardinalities, sorted unique sets are equal iff their bytes match.
+  if (cnt1 == cnt2) {
+    return memcmp(hash_arr1, hash_arr2, (size_t)cnt1 * sizeof(*hash_arr1)) == 0 ? 0 : -2;
+  }
+  if (cnt1 > cnt2) {
+    return sorted_subset(hash_arr2, (size_t)cnt2, hash_arr1, (size_t)cnt1) ? 1 : -2;
+  }
+  return sorted_subset(hash_arr1, (size_t)cnt1, hash_arr2, (size_t)cnt2) ? -1 : -2;
+}
+
+// ---
+
+#ifdef SELF_TEST
+int main(void) {
+  struct set* set1 = set_new();
+  set_add(set1, "mama");
+  set_add(set1, "myla");
+  set_add(set1, "ramu");
+  const char* str10 = set_fini(set1, 16);
+  fprintf(stderr, "set10=%s\n", str10);
+
+  int cmp;
+  struct set* set2 = set_new();
+  set_add(set2, "myla");
+  set_add(set2, "mama");
+  const char* str20 = set_fini(set2, 16);
+  fprintf(stderr, "set20=%s\n", str20);
+  cmp = rpmsetcmp(str10, str20);
+  assert(cmp == 1);
+
+  set_add(set2, "ramu");
+  const char* str21 = set_fini(set2, 16);
+  fprintf(stderr, "set21=%s\n", str21);
+  cmp = rpmsetcmp(str10, str21);
+  assert(cmp == 0);
+
+  set_add(set2, "baba");
+  const char* str22 = set_fini(set2, 16);
+  cmp = rpmsetcmp(str10, str22);
+  assert(cmp == -1);
+
+  set_add(set1, "deda");
+  const char* str11 = set_fini(set1, 16);
+  cmp = rpmsetcmp(str11, str22);
+  assert(cmp == -2);
+
+  set1 = set_free(set1);
+  set2 = set_free(set2);
+  str10 = _free(str10);
+  str11 = _free(str11);
+  str20 = _free(str20);
+  str21 = _free(str21);
+  str22 = _free(str22);
+
+  fprintf(stderr, "%s: api test OK\n", __FILE__);
+
+  return 0;
+}
+#endif

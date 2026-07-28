@@ -11,7 +11,7 @@ CPU=0
 RESET_WORK=1  # 0 — продолжить готовые сборки, 1 — начать всё заново.
 COLLECT_PERF=1
 PERF_RECORD=1  # Отдельный профильный прогон; не входит в среднее время.
-PERF_FREQUENCY=99
+PERF_FREQUENCY=499
 PERF_EVENTS='task-clock,context-switches,cpu-migrations,page-faults,minor-faults,major-faults,cycles,instructions,branches,branch-misses,cache-references,cache-misses,L1-dcache-loads,L1-dcache-load-misses,LLC-loads,LLC-load-misses'
 PACKAGER='krosh <gudovdo@my.msu.ru>'
 APT_SOURCE=/etc/apt/sources.list.d/alt.list
@@ -147,7 +147,7 @@ append_perf_stat()
 
 record_profile()
 {
-    local operation=$1 variant=$2 perf_dir=$3 status data report
+    local operation=$1 variant=$2 perf_dir=$3 dso_name=$4 status data report
     local libdir="$variant/lib/usr/lib64"
     local root="$COMMON/root"
     local -a command
@@ -187,17 +187,39 @@ record_profile()
             --input "$data" \
             >"$report" \
             2>"$perf_dir/$operation.report.stderr" || true
+
+        perf --buildid-dir "$perf_dir/buildid-cache" report \
+            --stdio \
+            --no-children \
+            --inline \
+            --percent-limit 0 \
+            --sort dso,symbol,srcline \
+            --input "$data" \
+            >"$perf_dir/$operation.lines.txt" \
+            2>"$perf_dir/$operation.lines.stderr" || true
+
+        # Без TUI: perf 6.18 может упасть при выборе символа без self-samples.
+        perf --buildid-dir "$perf_dir/buildid-cache" annotate \
+            --stdio \
+            --dsos "$dso_name" \
+            --input "$data" \
+            >"$perf_dir/$operation.annotate.txt" \
+            2>"$perf_dir/$operation.annotate.stderr" || true
     fi
 }
 
 prepare_perf_symbols()
 {
-    local perf_dir=$1 debug_file=$2 debuginfo_rpm=$3
+    local perf_dir=$1 runtime_file=$2 debug_file=$3 debuginfo_rpm=$4
+    local unstripped="$perf_dir/librpm.unstripped"
 
     mkdir -p "$perf_dir/buildid-cache"
     cp -a "$debuginfo_rpm" "$perf_dir/"
+    # Split-debug ELF содержит DWARF, но не байты .text для annotate.
+    # eu-unstrip объединяет runtime-код и matching debuginfo с тем же Build ID.
+    eu-unstrip -o "$unstripped" "$runtime_file" "$debug_file"
     perf --buildid-dir "$perf_dir/buildid-cache" buildid-cache \
-        --add "$debug_file" \
+        --add "$unstripped" \
         >"$perf_dir/buildid-cache.stdout" \
         2>"$perf_dir/buildid-cache.stderr"
 }
@@ -205,6 +227,7 @@ prepare_perf_symbols()
 benchmark_variant()
 {
     local variant=$1 result=$2 debug_file=$3 debuginfo_rpm=$4
+    local runtime_file=$5 dso_name=$6
     local operation run average label status_text perf_result perf_dir
     local -a times statuses
     local -a operations=(
@@ -228,7 +251,8 @@ benchmark_variant()
         if ((PERF_RECORD)); then
             rm -rf "$perf_dir"
             mkdir -p "$perf_dir"
-            prepare_perf_symbols "$perf_dir" "$debug_file" "$debuginfo_rpm"
+            prepare_perf_symbols "$perf_dir" "$runtime_file" \
+                "$debug_file" "$debuginfo_rpm"
         fi
     fi
 
@@ -267,13 +291,13 @@ benchmark_variant()
 
         if ((COLLECT_PERF && PERF_RECORD)); then
             printf '%s: perf record\n' "$operation"
-            record_profile "$operation" "$variant" "$perf_dir"
+            record_profile "$operation" "$variant" "$perf_dir" "$dso_name"
         fi
     done
 }
 
 for command in git gear-hsh hsh rpm rpmquery rpm2cpio cpio apt-get apt-cache \
-    taskset awk sed date sha256sum ldd readelf; do
+    taskset awk sed date sha256sum ldd readelf readlink eu-unstrip; do
     command -v "$command" >/dev/null || fail "required command not found: $command"
 done
 if ((COLLECT_PERF)); then
@@ -424,6 +448,8 @@ for setc in "${setc_files[@]}"; do
     libdir="$variant/lib/usr/lib64"
     [[ -e $libdir/librpm.so.7 && -e $libdir/librpmio.so.7 ]] || \
         fail "librpm libraries were not extracted for $filename"
+    runtime_file=$(readlink -f "$libdir/librpm.so.7")
+    dso_name=$(basename "$runtime_file")
     LD_LIBRARY_PATH="$libdir" ldd "$APT_GET" | \
         grep -F "$libdir/librpm.so.7" >/dev/null || \
         fail "apt-get does not load the built librpm for $filename"
@@ -446,7 +472,7 @@ for setc in "${setc_files[@]}"; do
     fi
 
     benchmark_variant "$variant" "$RESULT_DIR/$result_name" \
-        "$debug_file" "$debuginfo_rpm"
+        "$debug_file" "$debuginfo_rpm" "$runtime_file" "$dso_name"
 done
 
 printf '\nResults:\n'
