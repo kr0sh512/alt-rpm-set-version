@@ -13,7 +13,6 @@
 #include "system.h"
 
 #define CACHE_SIZE 512
-#define PIVOT_SIZE 486
 
 struct set {
   size_t cnt;
@@ -482,26 +481,6 @@ static const unsigned char char_to_num[255 + 1] = {[0] = 0xff, /* конец с�
                                                    ['z'] = 35,
 
                                                    [('z' + 1)... 255] = 0xee};
-
-static char* put6bits(int c, char* bit_pt) {
-  *bit_pt++ = (c >> 0) & 1;
-  *bit_pt++ = (c >> 1) & 1;
-  *bit_pt++ = (c >> 2) & 1;
-  *bit_pt++ = (c >> 3) & 1;
-  *bit_pt++ = (c >> 4) & 1;
-  *bit_pt++ = (c >> 5) & 1;
-
-  return bit_pt;
-}
-
-static char* put4bits(int c, char* bit_pt) {
-  *bit_pt++ = (c >> 0) & 1;
-  *bit_pt++ = (c >> 1) & 1;
-  *bit_pt++ = (c >> 2) & 1;
-  *bit_pt++ = (c >> 3) & 1;
-
-  return bit_pt;
-}
 
 // Decode base62 and Golomb-Rice in one pass. Base62 is LSB-first; a Z escape contributes 10 stream
 // bits.
