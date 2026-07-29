@@ -3,6 +3,7 @@
 Research on ALT Linux RPM set.c and dependency comparison using encoded symbol sets.
 
 - [Docs about current set:version implementation](Docs/set:version.md)
+- [Docs about rewrite implementation (ru)](Docs/set9_ru.md)
 
 # Compare results
 
