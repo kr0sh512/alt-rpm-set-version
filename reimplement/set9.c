@@ -26,7 +26,7 @@ struct set {
   }* symbols_v;
 };
 
-struct set* set_new() {
+struct set* set_new(void) {
   struct set* set = xmalloc(sizeof *set);
   set->cnt = 0;
   set->symbols_cap = 0;
@@ -201,23 +201,9 @@ static int encode_set_size(int cnt, int bpp) {
  * how multiple escapes are avoided.
  */
 
-static char* bits_to_char(int c, char* base62) {
-  assert(c >= 0 && c <= 61);
-
-  if (c < 10) {
-    *base62++ = c + '0';
-  } else if (c < 36) {
-    *base62++ = c - 10 + 'a';
-  } else if (c < 62) {
-    *base62++ = c - 36 + 'A';
-  }
-
-  return base62;
-}
-
 // ---
 
-static inline char encode_bpp(int bpp) { return bpp - 7 + 'a'; }
+static inline char encode_bpp(int bpp) { return (char)(bpp - 7 + 'a'); }
 
 struct encode_writer {
   uint64_t bits;
@@ -339,7 +325,7 @@ const char* set_fini(struct set* set, int bpp) {
   }
 
   unsigned unique_hash[set->cnt];
-  size_t unique_cnt = 0;
+  int unique_cnt = 0;
 
   // delete duplicates
   for (size_t i = 0; i < set->cnt; ++i) {
@@ -407,80 +393,80 @@ static int set_meta_fini(struct set_meta* meta) {
   return 0;
 }
 // UCHAR_MAX == 255
-static const unsigned char char_to_num[255 + 1] = {[0] = 0xff, /* конец строки */
+__extension__ static const unsigned char char_to_num[255 + 1] = {[0] = 0xff, /* конец строки */
 
-                                                   [1 ...('0' - 1)] = 0xee,
+                                                                 [1 ...('0' - 1)] = 0xee,
 
-                                                   ['0'] = 0,
-                                                   ['1'] = 1,
-                                                   ['2'] = 2,
-                                                   ['3'] = 3,
-                                                   ['4'] = 4,
-                                                   ['5'] = 5,
-                                                   ['6'] = 6,
-                                                   ['7'] = 7,
-                                                   ['8'] = 8,
-                                                   ['9'] = 9,
+                                                                 ['0'] = 0,
+                                                                 ['1'] = 1,
+                                                                 ['2'] = 2,
+                                                                 ['3'] = 3,
+                                                                 ['4'] = 4,
+                                                                 ['5'] = 5,
+                                                                 ['6'] = 6,
+                                                                 ['7'] = 7,
+                                                                 ['8'] = 8,
+                                                                 ['9'] = 9,
 
-                                                   [('9' + 1)...('A' - 1)] = 0xee,
+                                                                 [('9' + 1)...('A' - 1)] = 0xee,
 
-                                                   ['A'] = 36,
-                                                   ['B'] = 37,
-                                                   ['C'] = 38,
-                                                   ['D'] = 39,
-                                                   ['E'] = 40,
-                                                   ['F'] = 41,
-                                                   ['G'] = 42,
-                                                   ['H'] = 43,
-                                                   ['I'] = 44,
-                                                   ['J'] = 45,
-                                                   ['K'] = 46,
-                                                   ['L'] = 47,
-                                                   ['M'] = 48,
-                                                   ['N'] = 49,
-                                                   ['O'] = 50,
-                                                   ['P'] = 51,
-                                                   ['Q'] = 52,
-                                                   ['R'] = 53,
-                                                   ['S'] = 54,
-                                                   ['T'] = 55,
-                                                   ['U'] = 56,
-                                                   ['V'] = 57,
-                                                   ['W'] = 58,
-                                                   ['X'] = 59,
-                                                   ['Y'] = 60,
-                                                   ['Z'] = 61,
+                                                                 ['A'] = 36,
+                                                                 ['B'] = 37,
+                                                                 ['C'] = 38,
+                                                                 ['D'] = 39,
+                                                                 ['E'] = 40,
+                                                                 ['F'] = 41,
+                                                                 ['G'] = 42,
+                                                                 ['H'] = 43,
+                                                                 ['I'] = 44,
+                                                                 ['J'] = 45,
+                                                                 ['K'] = 46,
+                                                                 ['L'] = 47,
+                                                                 ['M'] = 48,
+                                                                 ['N'] = 49,
+                                                                 ['O'] = 50,
+                                                                 ['P'] = 51,
+                                                                 ['Q'] = 52,
+                                                                 ['R'] = 53,
+                                                                 ['S'] = 54,
+                                                                 ['T'] = 55,
+                                                                 ['U'] = 56,
+                                                                 ['V'] = 57,
+                                                                 ['W'] = 58,
+                                                                 ['X'] = 59,
+                                                                 ['Y'] = 60,
+                                                                 ['Z'] = 61,
 
-                                                   [('Z' + 1)...('a' - 1)] = 0xee,
+                                                                 [('Z' + 1)...('a' - 1)] = 0xee,
 
-                                                   ['a'] = 10,
-                                                   ['b'] = 11,
-                                                   ['c'] = 12,
-                                                   ['d'] = 13,
-                                                   ['e'] = 14,
-                                                   ['f'] = 15,
-                                                   ['g'] = 16,
-                                                   ['h'] = 17,
-                                                   ['i'] = 18,
-                                                   ['j'] = 19,
-                                                   ['k'] = 20,
-                                                   ['l'] = 21,
-                                                   ['m'] = 22,
-                                                   ['n'] = 23,
-                                                   ['o'] = 24,
-                                                   ['p'] = 25,
-                                                   ['q'] = 26,
-                                                   ['r'] = 27,
-                                                   ['s'] = 28,
-                                                   ['t'] = 29,
-                                                   ['u'] = 30,
-                                                   ['v'] = 31,
-                                                   ['w'] = 32,
-                                                   ['x'] = 33,
-                                                   ['y'] = 34,
-                                                   ['z'] = 35,
+                                                                 ['a'] = 10,
+                                                                 ['b'] = 11,
+                                                                 ['c'] = 12,
+                                                                 ['d'] = 13,
+                                                                 ['e'] = 14,
+                                                                 ['f'] = 15,
+                                                                 ['g'] = 16,
+                                                                 ['h'] = 17,
+                                                                 ['i'] = 18,
+                                                                 ['j'] = 19,
+                                                                 ['k'] = 20,
+                                                                 ['l'] = 21,
+                                                                 ['m'] = 22,
+                                                                 ['n'] = 23,
+                                                                 ['o'] = 24,
+                                                                 ['p'] = 25,
+                                                                 ['q'] = 26,
+                                                                 ['r'] = 27,
+                                                                 ['s'] = 28,
+                                                                 ['t'] = 29,
+                                                                 ['u'] = 30,
+                                                                 ['v'] = 31,
+                                                                 ['w'] = 32,
+                                                                 ['x'] = 33,
+                                                                 ['y'] = 34,
+                                                                 ['z'] = 35,
 
-                                                   [('z' + 1)... 255] = 0xee};
+                                                                 [('z' + 1)... 255] = 0xee};
 
 // Decode base62 and Golomb-Rice in one pass. Base62 is LSB-first; a Z escape contributes 10 stream
 // bits.
@@ -631,7 +617,8 @@ static int cache_decode_set(struct set_meta* meta, int target_bpp, const unsigne
 
   int len = (int)meta->len;
   int capacity = meta->value_capacity;
-  struct cache_ent* ent = xmalloc(sizeof(*ent) + (size_t)(capacity) * sizeof(unsigned) + len + 1);
+  struct cache_ent* ent =
+      xmalloc(sizeof(*ent) + (size_t)capacity * sizeof(unsigned) + (size_t)len + 1);
   ent->hash_arr = (unsigned*)(ent + 1);
   ent->str = (char*)(ent->hash_arr + capacity);
 
@@ -760,7 +747,7 @@ static int downsample_set(int cnt, const unsigned* hash_pt, unsigned* ds_pt, int
   while (v1 < v1_end) *ds_pt++ = *v1++;
   while (v2 < v2_end) *ds_pt++ = *v2++ & mask;
 
-  return ds_pt - ds_start;
+  return (int)(ds_pt - ds_start);
 }
 
 static const unsigned* step_lower_bound(const unsigned* first, const unsigned* last, unsigned value,
@@ -901,11 +888,11 @@ int main(void) {
 
   set1 = set_free(set1);
   set2 = set_free(set2);
-  str10 = _free(str10);
-  str11 = _free(str11);
-  str20 = _free(str20);
-  str21 = _free(str21);
-  str22 = _free(str22);
+  str10 = _free((void*)str10);
+  str11 = _free((void*)str11);
+  str20 = _free((void*)str20);
+  str21 = _free((void*)str21);
+  str22 = _free((void*)str22);
 
   fprintf(stderr, "%s: api test OK\n", __FILE__);
 
