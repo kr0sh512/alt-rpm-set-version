@@ -4,17 +4,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <zstd.h>
 
 /*
  * This is intentionally a new set-string format.  It is not compatible with
  * the Rice-Golomb/base62 strings produced by the original lib/set.c.
  *
  *     R1<two decimal bpp digits><hex CRoaring portable serialization>
- *     R2<two decimal bpp digits><hex Zstd-compressed portable serialization>
  */
-#define FORMAT_RAW "R1"
-#define FORMAT_ZSTD "R2"
+#define FORMAT_PREFIX "R1"
 #define FORMAT_HEADER_LEN 4
 #define MAX_SERIALIZED_SIZE (64u * 1024u * 1024u)
 
@@ -92,14 +89,8 @@ static char hex_digit(unsigned value) {
 const char* set_fini(struct set* set, int bpp) {
   roaring_bitmap_t* truncated;
   size_t portable_size;
-  size_t compressed_capacity;
-  size_t compressed_size;
   size_t written;
   unsigned char* portable;
-  unsigned char* compressed;
-  const unsigned char* payload;
-  const char* prefix;
-  size_t payload_size;
   char* output;
 
   if (!set || set->added == 0 || bpp < 10 || bpp > 32) return NULL;
@@ -118,35 +109,19 @@ const char* set_fini(struct set* set, int bpp) {
   portable = xmalloc(portable_size);
   written = roaring_bitmap_portable_serialize(truncated, (char*)portable);
   if (written != portable_size) abort();
+  if (portable_size > (SIZE_MAX - FORMAT_HEADER_LEN - 1) / 2) abort();
 
-  compressed_capacity = ZSTD_compressBound(portable_size);
-  compressed = xmalloc(compressed_capacity);
-  compressed_size =
-      ZSTD_compress(compressed, compressed_capacity, portable, portable_size, ZSTD_CLEVEL_DEFAULT);
-  if (ZSTD_isError(compressed_size)) abort();
-  if (compressed_size < portable_size) {
-    prefix = FORMAT_ZSTD;
-    payload = compressed;
-    payload_size = compressed_size;
-  } else {
-    prefix = FORMAT_RAW;
-    payload = portable;
-    payload_size = portable_size;
-  }
-  if (payload_size > (SIZE_MAX - FORMAT_HEADER_LEN - 1) / 2) abort();
-
-  output = xmalloc(FORMAT_HEADER_LEN + payload_size * 2 + 1);
-  memcpy(output, prefix, 2);
+  output = xmalloc(FORMAT_HEADER_LEN + portable_size * 2 + 1);
+  memcpy(output, FORMAT_PREFIX, sizeof(FORMAT_PREFIX) - 1);
   output[2] = (char)('0' + bpp / 10);
   output[3] = (char)('0' + bpp % 10);
 
-  for (size_t i = 0; i < payload_size; ++i) {
-    output[FORMAT_HEADER_LEN + i * 2] = hex_digit(payload[i] >> 4);
-    output[FORMAT_HEADER_LEN + i * 2 + 1] = hex_digit(payload[i] & 0x0f);
+  for (size_t i = 0; i < portable_size; ++i) {
+    output[FORMAT_HEADER_LEN + i * 2] = hex_digit(portable[i] >> 4);
+    output[FORMAT_HEADER_LEN + i * 2 + 1] = hex_digit(portable[i] & 0x0f);
   }
-  output[FORMAT_HEADER_LEN + payload_size * 2] = '\0';
+  output[FORMAT_HEADER_LEN + portable_size * 2] = '\0';
 
-  free(compressed);
   free(portable);
   roaring_bitmap_free(truncated);
   free(set->encoded);
@@ -173,22 +148,18 @@ static int hex_value(char c) {
 static roaring_bitmap_t* decode_bitmap(const char* str, unsigned* bpp) {
   roaring_bitmap_t* bitmap;
   unsigned char* bytes;
-  unsigned char* portable;
   const char* hex;
   const char* reason = NULL;
-  char version;
   size_t hex_len;
   size_t str_len;
   size_t byte_count;
-  size_t portable_size;
   size_t expected;
 
   if (!str || !bpp) return NULL;
   if (strncmp(str, "set:", 4) == 0) str += 4;
   str_len = strlen(str);
   if (str_len < FORMAT_HEADER_LEN) return NULL;
-  if (str[0] != 'R' || (str[1] != '1' && str[1] != '2')) return NULL;
-  version = str[1];
+  if (strncmp(str, FORMAT_PREFIX, sizeof(FORMAT_PREFIX) - 1) != 0) return NULL;
   if (str[2] < '0' || str[2] > '9' || str[3] < '0' || str[3] > '9') return NULL;
 
   *bpp = (unsigned)(str[2] - '0') * 10u + (unsigned)(str[3] - '0');
@@ -211,44 +182,14 @@ static roaring_bitmap_t* decode_bitmap(const char* str, unsigned* bpp) {
     bytes[i] = (unsigned char)((high << 4) | low);
   }
 
-  if (version == '1') {
-    portable = bytes;
-    portable_size = byte_count;
-  } else {
-    unsigned long long frame_content_size;
-    size_t frame_size = ZSTD_findFrameCompressedSize(bytes, byte_count);
-
-    if (ZSTD_isError(frame_size) || frame_size != byte_count) {
-      free(bytes);
-      return NULL;
-    }
-
-    frame_content_size = ZSTD_getFrameContentSize(bytes, byte_count);
-    if (frame_content_size == ZSTD_CONTENTSIZE_ERROR ||
-        frame_content_size == ZSTD_CONTENTSIZE_UNKNOWN || frame_content_size == 0 ||
-        frame_content_size > MAX_SERIALIZED_SIZE || frame_content_size > SIZE_MAX) {
-      free(bytes);
-      return NULL;
-    }
-
-    portable_size = (size_t)frame_content_size;
-    portable = xmalloc(portable_size);
-    expected = ZSTD_decompress(portable, portable_size, bytes, byte_count);
+  expected = roaring_bitmap_portable_deserialize_size((const char*)bytes, byte_count);
+  if (expected != byte_count) {
     free(bytes);
-    if (ZSTD_isError(expected) || expected != portable_size) {
-      free(portable);
-      return NULL;
-    }
-  }
-
-  expected = roaring_bitmap_portable_deserialize_size((const char*)portable, portable_size);
-  if (expected != portable_size) {
-    free(portable);
     return NULL;
   }
 
-  bitmap = roaring_bitmap_portable_deserialize_safe((const char*)portable, portable_size);
-  free(portable);
+  bitmap = roaring_bitmap_portable_deserialize_safe((const char*)bytes, byte_count);
+  free(bytes);
   if (!bitmap) return NULL;
   if (!roaring_bitmap_internal_validate(bitmap, &reason) || roaring_bitmap_is_empty(bitmap)) {
     roaring_bitmap_free(bitmap);
@@ -334,8 +275,8 @@ int main(void) {
   assert(rpmsetcmp(small16, large16) == -1);
   assert(rpmsetcmp(small16, other16) == -2);
   assert(rpmsetcmp("bad", small16) == -3);
+  assert(rpmsetcmp("R21600", small16) == -3);
   assert(rpmsetcmp(small16, "R116xyz") == -4);
-  assert(rpmsetcmp(small16, "R216xyz") == -4);
   assert(rpmsetcmp("R", small16) == -3);
 
   free(prefixed);
