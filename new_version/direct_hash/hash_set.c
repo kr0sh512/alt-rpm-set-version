@@ -245,56 +245,45 @@ const char* set_fini(struct set* set, int bpp) {
   return output;
 }
 
-static int base64_value(unsigned char c) {
-  if (c >= 'A' && c <= 'Z') return c - 'A';
-  if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-  if (c >= '0' && c <= '9') return c - '0' + 52;
-  if (c == '+') return 62;
-  if (c == '/') return 63;
-  return -1;
-}
+static const unsigned char base64_values[256] = {
+    ['A'] = 1,  ['B'] = 2,  ['C'] = 3,  ['D'] = 4,  ['E'] = 5,  ['F'] = 6,  ['G'] = 7,  ['H'] = 8,
+    ['I'] = 9,  ['J'] = 10, ['K'] = 11, ['L'] = 12, ['M'] = 13, ['N'] = 14, ['O'] = 15, ['P'] = 16,
+    ['Q'] = 17, ['R'] = 18, ['S'] = 19, ['T'] = 20, ['U'] = 21, ['V'] = 22, ['W'] = 23, ['X'] = 24,
+    ['Y'] = 25, ['Z'] = 26, ['a'] = 27, ['b'] = 28, ['c'] = 29, ['d'] = 30, ['e'] = 31, ['f'] = 32,
+    ['g'] = 33, ['h'] = 34, ['i'] = 35, ['j'] = 36, ['k'] = 37, ['l'] = 38, ['m'] = 39, ['n'] = 40,
+    ['o'] = 41, ['p'] = 42, ['q'] = 43, ['r'] = 44, ['s'] = 45, ['t'] = 46, ['u'] = 47, ['v'] = 48,
+    ['w'] = 49, ['x'] = 50, ['y'] = 51, ['z'] = 52, ['0'] = 53, ['1'] = 54, ['2'] = 55, ['3'] = 56,
+    ['4'] = 57, ['5'] = 58, ['6'] = 59, ['7'] = 60, ['8'] = 61, ['9'] = 62, ['+'] = 63, ['/'] = 64,
+};
 
-static int base64_decode(const char* input, size_t input_len, unsigned char** bytes,
-                         size_t* byte_count) {
-  if (input_len == 0 || input_len % 4 != 0) return -1;
-  if (input_len / 4 > SIZE_MAX / 3) return -1;
+static inline int base64_value(unsigned char c) { return (int)base64_values[c] - 1; }
 
-  size_t capacity = input_len / 4 * 3;
-  unsigned char* output = xmalloc(capacity);
-  unsigned char* destination = output;
+struct decode_writer {
+  unsigned* hashes;
+  size_t capacity;
+  size_t written;
+  uint64_t bits;
+  uint64_t mask;
+  unsigned filled;
+  unsigned bpp;
+};
 
-  for (size_t offset = 0; offset < input_len; offset += 4) {
-    int v0 = base64_value((unsigned char)input[offset]);
-    int v1 = base64_value((unsigned char)input[offset + 1]);
-    int last = offset + 4 == input_len;
-    if (v0 < 0 || v1 < 0) goto invalid;
+static inline int decode_writer_put(struct decode_writer* writer, uint32_t bytes,
+                                    unsigned byte_count) {
+  writer->bits |= (uint64_t)bytes << writer->filled;
+  writer->filled += byte_count * 8;
 
-    *destination++ = (unsigned char)((v0 << 2) | (v1 >> 4));
-    if (input[offset + 2] == '=') {
-      if (!last || input[offset + 3] != '=' || (v1 & 0x0f) != 0) goto invalid;
-      continue;
-    }
+  while (writer->filled >= writer->bpp) {
+    if (writer->written == writer->capacity) return -1;
 
-    int v2 = base64_value((unsigned char)input[offset + 2]);
-    if (v2 < 0) goto invalid;
-    *destination++ = (unsigned char)((v1 << 4) | (v2 >> 2));
-    if (input[offset + 3] == '=') {
-      if (!last || (v2 & 0x03) != 0) goto invalid;
-      continue;
-    }
-
-    int v3 = base64_value((unsigned char)input[offset + 3]);
-    if (v3 < 0) goto invalid;
-    *destination++ = (unsigned char)((v2 << 6) | v3);
+    unsigned current = (unsigned)(writer->bits & writer->mask);
+    writer->bits >>= writer->bpp;
+    writer->filled -= writer->bpp;
+    if (writer->written > 0 && writer->hashes[writer->written - 1] >= current) return -1;
+    writer->hashes[writer->written++] = current;
   }
 
-  *bytes = output;
-  *byte_count = (size_t)(destination - output);
   return 0;
-
-invalid:
-  _free(output);
-  return -1;
 }
 
 static int decode_set(const char* str, struct decoded_set* decoded) {
@@ -307,62 +296,67 @@ static int decode_set(const char* str, struct decoded_set* decoded) {
   unsigned bpp = (unsigned)(str[2] - '0') * 10 + (unsigned)(str[3] - '0');
   if (bpp < 10 || bpp > 32) return -1;
 
-  unsigned char* bytes;
-  size_t byte_count;
-  if (base64_decode(str + FORMAT_HEADER_LEN, str_len - FORMAT_HEADER_LEN, &bytes, &byte_count) < 0)
-    return -1;
-  if (byte_count > SIZE_MAX / 8) {
-    _free(bytes);
-    return -1;
-  }
+  const char* input = str + FORMAT_HEADER_LEN;
+  size_t input_len = str_len - FORMAT_HEADER_LEN;
+  if (input_len == 0 || input_len % 4 != 0 || input_len / 4 > SIZE_MAX / 3) return -1;
+
+  size_t byte_count = input_len / 4 * 3;
+  if (input[input_len - 1] == '=') --byte_count;
+  if (input[input_len - 2] == '=') --byte_count;
+  if (byte_count > SIZE_MAX / 8) return -1;
 
   size_t count = byte_count * 8 / bpp;
-  if (count == 0 || count > (SIZE_MAX - 7) / bpp || (count * bpp + 7) / 8 != byte_count) {
-    _free(bytes);
+  if (count == 0 || count > (SIZE_MAX - 7) / bpp || count > SIZE_MAX / sizeof(unsigned) ||
+      (count * bpp + 7) / 8 != byte_count) {
     return -1;
   }
 
   unsigned* hashes = xmalloc(count * sizeof(*hashes));
-  const unsigned char* input = bytes;
-  const unsigned char* input_end = bytes + byte_count;
-  uint64_t bits = 0;
-  unsigned filled = 0;
-  uint64_t mask = bpp < 32 ? (UINT64_C(1) << bpp) - 1 : UINT32_MAX;
+  struct decode_writer writer = {
+      .hashes = hashes,
+      .capacity = count,
+      .mask = bpp < 32 ? (UINT64_C(1) << bpp) - 1 : UINT32_MAX,
+      .bpp = bpp,
+  };
 
-  for (size_t i = 0; i < count; ++i) {
-    while (filled < bpp) {
-      if (input == input_end) {
-        _free(hashes);
-        _free(bytes);
-        return -1;
-      }
-      bits |= (uint64_t)*input++ << filled;
-      filled += 8;
+  for (size_t offset = 0; offset < input_len; offset += 4) {
+    int v0 = base64_value((unsigned char)input[offset]);
+    int v1 = base64_value((unsigned char)input[offset + 1]);
+    int last = offset + 4 == input_len;
+    if (v0 < 0 || v1 < 0) goto invalid;
+
+    uint32_t bytes = (uint32_t)((v0 << 2) | (v1 >> 4));
+    if (input[offset + 2] == '=') {
+      if (!last || input[offset + 3] != '=' || (v1 & 0x0f) != 0 ||
+          decode_writer_put(&writer, bytes, 1) < 0)
+        goto invalid;
+      continue;
     }
-    hashes[i] = (unsigned)(bits & mask);
-    bits >>= bpp;
-    filled -= bpp;
-    if (i > 0 && hashes[i - 1] >= hashes[i]) {
-      _free(hashes);
-      _free(bytes);
-      return -1;
+
+    int v2 = base64_value((unsigned char)input[offset + 2]);
+    if (v2 < 0) goto invalid;
+    bytes |= (uint32_t)(((v1 & 0x0f) << 4) | (v2 >> 2)) << 8;
+    if (input[offset + 3] == '=') {
+      if (!last || (v2 & 0x03) != 0 || decode_writer_put(&writer, bytes, 2) < 0) goto invalid;
+      continue;
     }
+
+    int v3 = base64_value((unsigned char)input[offset + 3]);
+    if (v3 < 0) goto invalid;
+    bytes |= (uint32_t)(((v2 & 0x03) << 6) | v3) << 16;
+    if (decode_writer_put(&writer, bytes, 3) < 0) goto invalid;
   }
 
-  while (input < input_end) {
-    bits |= (uint64_t)*input++ << filled;
-    filled += 8;
-  }
-  _free(bytes);
-  if (bits != 0) {
-    _free(hashes);
-    return -1;
-  }
+  if (writer.written != count || writer.bits != 0) goto invalid;
 
   decoded->hashes = hashes;
   decoded->count = count;
   decoded->bpp = bpp;
   return 0;
+
+invalid:
+  _free(hashes);
+  return -1;
 }
 
 /* Reduce a sorted set of (bpp + 1)-bit values to a sorted set of bpp-bit values. */
