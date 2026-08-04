@@ -48,6 +48,7 @@ struct set* set_new(void) {
   set->strings_cap = 0;
   set->strings = NULL;
   set->symbols_v = NULL;
+
   return set;
 }
 
@@ -71,6 +72,8 @@ void set_add(struct set* set, const char* sym) {
   memcpy(set->strings + set->strings_len, sym, length);
   set->strings_len = required;
   ++set->cnt;
+
+  return;
 }
 
 struct set* set_free(struct set* set) {
@@ -79,6 +82,7 @@ struct set* set_free(struct set* set) {
     _free(set->symbols_v);
     set = _free(set);
   }
+
   return NULL;
 }
 
@@ -95,6 +99,7 @@ static unsigned hash(const char* str) {
   hash += hash << 3;
   hash ^= hash >> 11;
   hash += hash << 15;
+
   return hash;
 }
 
@@ -104,12 +109,14 @@ static int compare_symbols(const void* arg1, const void* arg2) {
 
   if (s1->hash > s2->hash) return 1;
   if (s1->hash < s2->hash) return -1;
+
   return 0;
 }
 
 static void sort_symbols(struct symbols* values, size_t count, unsigned bpp) {
   if (count < 128) {
     qsort(values, count, sizeof(*values), compare_symbols);
+
     return;
   }
 
@@ -142,6 +149,8 @@ static void sort_symbols(struct symbols* values, size_t count, unsigned bpp) {
 
   if (source != values) memcpy(values, source, count * sizeof(*values));
   _free(temporary);
+
+  return;
 }
 
 static const char base64_alphabet[] =
@@ -151,6 +160,7 @@ static size_t base64_encoded_size(size_t byte_count) {
   if (byte_count > SIZE_MAX - 2) abort();
   size_t groups = (byte_count + 2) / 3;
   if (groups > (SIZE_MAX - FORMAT_HEADER_LEN - 1) / 4) abort();
+
   return groups * 4;
 }
 
@@ -179,6 +189,8 @@ static void base64_encode(const unsigned char* input, size_t input_len, char* ou
     output[2] = base64_alphabet[(value >> 6) & 0x3f];
     output[3] = '=';
   }
+
+  return;
 }
 
 static unsigned char* pack_hashes(const unsigned* hashes, size_t count, unsigned bpp,
@@ -194,14 +206,17 @@ static unsigned char* pack_hashes(const unsigned* hashes, size_t count, unsigned
   for (size_t i = 0; i < count; ++i) {
     bits |= (uint64_t)hashes[i] << filled;
     filled += bpp;
+
     while (filled >= 8) {
       *output++ = (unsigned char)bits;
       bits >>= 8;
       filled -= 8;
     }
   }
+
   if (filled) *output++ = (unsigned char)bits;
   assert((size_t)(output - bytes) == *byte_count);
+
   return bytes;
 }
 
@@ -242,6 +257,7 @@ const char* set_fini(struct set* set, int bpp) {
 
   _free(bytes);
   _free(unique_hashes);
+
   return output;
 }
 
@@ -279,6 +295,7 @@ static inline int decode_writer_put(struct decode_writer* writer, uint32_t bytes
     unsigned current = (unsigned)(writer->bits & writer->mask);
     writer->bits >>= writer->bpp;
     writer->filled -= writer->bpp;
+
     if (writer->written > 0 && writer->hashes[writer->written - 1] >= current) return -1;
     writer->hashes[writer->written++] = current;
   }
@@ -352,10 +369,12 @@ static int decode_set(const char* str, struct decoded_set* decoded) {
   decoded->hashes = hashes;
   decoded->count = count;
   decoded->bpp = bpp;
+
   return 0;
 
 invalid:
   _free(hashes);
+
   return -1;
 }
 
@@ -396,6 +415,7 @@ static size_t downsample_set(size_t count, const unsigned* hashes, unsigned* res
   }
   while (low < low_end) *output++ = *low++;
   while (high < high_end) *output++ = *high++ & mask;
+
   return (size_t)(output - result);
 }
 
@@ -421,6 +441,8 @@ static void downsample_to(struct decoded_set* set, unsigned target_bpp) {
     _free(original);
     set->hashes = scratch;
   }
+
+  return;
 }
 
 static const unsigned* step_lower_bound(const unsigned* first, const unsigned* last, unsigned value,
@@ -442,6 +464,7 @@ static const unsigned* step_lower_bound(const unsigned* first, const unsigned* l
     else
       step /= 2;
   }
+
   return first + position + 1;
 }
 
@@ -458,6 +481,7 @@ static int sorted_subset(const unsigned* small, size_t small_count, const unsign
       if (large == large_end || *large != value) return 0;
       ++large;
     }
+
     return 1;
   }
 
@@ -467,6 +491,7 @@ static int sorted_subset(const unsigned* small, size_t small_count, const unsign
     if (large == large_end || *large != value) return 0;
     ++large;
   }
+
   return 1;
 }
 
@@ -494,5 +519,6 @@ int rpmsetcmp(const char* str1, const char* str2) {
 
   _free(set1.hashes);
   _free(set2.hashes);
+
   return result;
 }
