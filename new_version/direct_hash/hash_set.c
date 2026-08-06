@@ -44,67 +44,49 @@ struct decoded_set {
   unsigned bpp;
 };
 
-/* A bounded set-string cache owns each key. Values start as a sparse hash map
- * from logical element index to decoded hash and become dense only when an
- * operation necessarily consumes the complete set. */
-struct value_slot {
-  size_t index_plus_one;
-  unsigned value;
-};
-
-enum { INDEXED_COMPARISON_CACHE_SIZE = 4 };
-
-struct indexed_set {
-  struct indexed_set* bucket_next;
-  struct indexed_set* newer;
-  struct indexed_set* older;
-  char* str;
-  struct value_slot* values;
-  unsigned* dense_values;
-  unsigned* projected_values;
-  struct indexed_set* compared_with[INDEXED_COMPARISON_CACHE_SIZE];
-  int comparison_results[INDEXED_COMPARISON_CACHE_SIZE];
-  size_t str_len;
-  size_t input_len;
-  size_t byte_count;
-  size_t count;
-  size_t value_capacity;
-  size_t value_count;
-  size_t projected_count;
-  size_t retained_bytes;
-  size_t value_bytes;
-  size_t dense_bytes;
-  size_t projected_bytes;
-  uint32_t fingerprint;
-  unsigned bucket;
-  unsigned bpp;
-  unsigned projected_bpp;
-  unsigned cache_id;
-  unsigned comparison_next;
-  int cache_limited;
-  int invalid;
-};
-
 enum {
-  INDEXED_CACHE_SIZE = 512,
-  INDEXED_CACHE_BUCKETS = 1024,
-  VALUE_CACHE_INITIAL_CAPACITY = 16,
-  RPMSETCMP_FALLBACK = -5,
+  DECODED_CACHE_SIZE = 512,
+  DECODED_CACHE_BUCKETS = 1024,
+  PAIR_CACHE_SIZE = 4,
 };
 
-#ifndef INDEXED_CACHE_BYTE_LIMIT
-/* Retained key/value storage per argument role; temporary decoder buffers are not cached. */
-#define INDEXED_CACHE_BYTE_LIMIT ((size_t)64 * 1024 * 1024)
-#endif
+struct decoded_cache_entry;
 
-static unsigned indexed_cache_count[2];
-static size_t indexed_cache_bytes[2];
-static struct indexed_set* indexed_cache_buckets[2][INDEXED_CACHE_BUCKETS];
-static struct indexed_set* indexed_cache_newest[2];
-static struct indexed_set* indexed_cache_oldest[2];
-/* Entries may be evicted while a comparison is using them, so rpmsetcmp() holds this lock
- * across the complete lookup/search lifetime. */
-static atomic_flag indexed_cache_lock = ATOMIC_FLAG_INIT;
+struct pair_cache_entry {
+  uint64_t other_identity;
+  int result;
+};
+
+struct decoded_cache_entry {
+  struct decoded_cache_entry* bucket_next;
+  struct decoded_cache_entry* newer;
+  struct decoded_cache_entry* older;
+  char* str;
+  unsigned* hashes;
+  size_t len;
+  size_t count;
+  uint32_t fingerprint;
+  uint64_t identity;
+  unsigned bucket;
+  unsigned target_bpp;
+  unsigned pair_next;
+  struct pair_cache_entry pairs[PAIR_CACHE_SIZE];
+};
+
+struct set_meta {
+  const char* str;
+  size_t len;
+  unsigned bpp;
+};
+
+static unsigned decoded_cache_count[2];
+static struct decoded_cache_entry* decoded_cache_buckets[2][DECODED_CACHE_BUCKETS];
+static struct decoded_cache_entry* decoded_cache_newest[2];
+static struct decoded_cache_entry* decoded_cache_oldest[2];
+static uint64_t decoded_cache_next_identity = 1;
+/* Cached arrays remain in use until comparison completes, so lookup, eviction,
+ * and comparison share one lock. */
+static atomic_flag decoded_cache_lock = ATOMIC_FLAG_INIT;
 
 struct set* set_new(void) {
   struct set* set = xmalloc(sizeof(*set));
@@ -312,7 +294,19 @@ const char* set_fini(struct set* set, int bpp) {
   }
 
   size_t byte_count;
-  unsigned char* bytes = pack_hashes(unique_hashes, unique_count, (unsigned)bpp, &byte_count);
+  unsigned char* allocated_bytes = NULL;
+  const unsigned char* bytes;
+#if UINT_MAX == UINT32_MAX && defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && \
+    __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+  if (bpp == 32 && sizeof(unsigned) == 4) {
+    byte_count = unique_count * sizeof(*unique_hashes);
+    bytes = (const unsigned char*)unique_hashes;
+  } else
+#endif
+  {
+    allocated_bytes = pack_hashes(unique_hashes, unique_count, (unsigned)bpp, &byte_count);
+    bytes = allocated_bytes;
+  }
   size_t payload_len = base64_encoded_size(byte_count);
   char* output = xmalloc(FORMAT_HEADER_LEN + payload_len + 1);
   memcpy(output, FORMAT_PREFIX, sizeof(FORMAT_PREFIX) - 1);
@@ -321,7 +315,7 @@ const char* set_fini(struct set* set, int bpp) {
   base64_encode(bytes, byte_count, output + FORMAT_HEADER_LEN);
   output[FORMAT_HEADER_LEN + payload_len] = '\0';
 
-  _free(bytes);
+  _free(allocated_bytes);
   _free(unique_hashes);
 
   return output;
@@ -340,372 +334,27 @@ static const unsigned char base64_values[256] = {
 
 static inline int base64_value(unsigned char c) { return (int)base64_values[c] - 1; }
 
-static uint32_t indexed_fingerprint(const char* str) {
-  const unsigned char* input = (const unsigned char*)str + FORMAT_HEADER_LEN;
-  uint32_t fingerprint = (uint32_t)input[0] | ((uint32_t)input[1] << 8) |
-                         ((uint32_t)input[2] << 16) | ((uint32_t)input[3] << 24);
-  fingerprint ^= (uint32_t)(unsigned char)str[2] << 7;
-  fingerprint ^= fingerprint >> 11;
-  fingerprint *= UINT32_C(0x9e3779b1);
-  fingerprint ^= fingerprint >> 16;
-  return fingerprint;
+static inline int has_set_prefix(const char* str) {
+  return str[0] == 's' && str[1] == 'e' && str[2] == 't' && str[3] == ':';
 }
 
-static int indexed_meta_init(const char* str, struct indexed_set* set) {
-  size_t str_len = strlen(str);
-  if (str_len <= FORMAT_HEADER_LEN) return -1;
-  if (strncmp(str, FORMAT_PREFIX, sizeof(FORMAT_PREFIX) - 1) != 0) return -1;
+static int set_meta_init(const char* source, struct set_meta* meta) {
+  const char* str = source;
+  if (has_set_prefix(str)) str += 4;
+  if (has_set_prefix(str)) return -1;
+
+  /* A valid direct set has at least one complete Base64 quartet.  Checking
+   * this fixed prefix makes cache hits independent of total key length. */
+  if (str[0] != FORMAT_PREFIX[0] || str[1] != FORMAT_PREFIX[1]) return -1;
   if (str[2] < '0' || str[2] > '9' || str[3] < '0' || str[3] > '9') return -1;
+  if (str[4] == '\0' || str[5] == '\0' || str[6] == '\0' || str[7] == '\0') return -1;
 
   unsigned bpp = (unsigned)(str[2] - '0') * 10 + (unsigned)(str[3] - '0');
   if (bpp < 10 || bpp > 32) return -1;
 
-  const unsigned char* input = (const unsigned char*)str + FORMAT_HEADER_LEN;
-  size_t input_len = str_len - FORMAT_HEADER_LEN;
-  if (input_len == 0 || input_len % 4 != 0 || input_len / 4 > SIZE_MAX / 3) return -1;
-
-  /* Sparse same-bpp lookup trusts canonical payloads produced by set_fini(). Validate the final
-   * quartet needed to derive the exact element count; indexed probes validate every sextet they
-   * touch, while dense and projected paths validate the complete payload during decoding. */
-  size_t last = input_len - 4;
-  int v0 = base64_value(input[last]);
-  int v1 = base64_value(input[last + 1]);
-  if (v0 < 0 || v1 < 0) return -1;
-
-  uint32_t final_bytes = (uint32_t)((v0 << 2) | (v1 >> 4));
-  unsigned final_byte_count = 1;
-  if (input[last + 2] == '=') {
-    if (input[last + 3] != '=' || (v1 & 0x0f) != 0) return -1;
-  } else {
-    int v2 = base64_value(input[last + 2]);
-    if (v2 < 0) return -1;
-    final_bytes |= (uint32_t)(((v1 & 0x0f) << 4) | (v2 >> 2)) << 8;
-    final_byte_count = 2;
-    if (input[last + 3] == '=') {
-      if ((v2 & 0x03) != 0) return -1;
-    } else {
-      int v3 = base64_value(input[last + 3]);
-      if (v3 < 0) return -1;
-      final_bytes |= (uint32_t)(((v2 & 0x03) << 6) | v3) << 16;
-      final_byte_count = 3;
-    }
-  }
-
-  size_t byte_count = input_len / 4 * 3 - (3 - final_byte_count);
-  if (byte_count > SIZE_MAX / 8) return -1;
-  size_t count = byte_count * 8 / bpp;
-  if (count == 0 || count > (SIZE_MAX - 7) / bpp || count > SIZE_MAX / sizeof(unsigned) ||
-      (count * bpp + 7) / 8 != byte_count)
-    return -1;
-
-  unsigned padding_bits = (unsigned)(byte_count * 8 - count * bpp);
-  unsigned final_byte = (unsigned)(final_bytes >> ((final_byte_count - 1) * 8)) & UINT8_MAX;
-  if (padding_bits != 0 && final_byte >> (8 - padding_bits) != 0) return -1;
-
-  set->str_len = str_len;
-  set->input_len = input_len;
-  set->byte_count = byte_count;
-  set->count = count;
-  set->bpp = bpp;
-  return 0;
-}
-
-static void indexed_cache_touch(struct indexed_set* set, unsigned cache_id) {
-  if (set == indexed_cache_newest[cache_id]) return;
-
-  if (set->newer) set->newer->older = set->older;
-  if (set->older) set->older->newer = set->newer;
-  if (set == indexed_cache_oldest[cache_id]) indexed_cache_oldest[cache_id] = set->newer;
-
-  set->newer = NULL;
-  set->older = indexed_cache_newest[cache_id];
-  indexed_cache_newest[cache_id]->newer = set;
-  indexed_cache_newest[cache_id] = set;
-}
-
-static void indexed_cache_remove(struct indexed_set* victim, unsigned cache_id) {
-  if (victim->newer)
-    victim->newer->older = victim->older;
-  else
-    indexed_cache_newest[cache_id] = victim->older;
-  if (victim->older)
-    victim->older->newer = victim->newer;
-  else
-    indexed_cache_oldest[cache_id] = victim->newer;
-
-  struct indexed_set** link = &indexed_cache_buckets[cache_id][victim->bucket];
-  while (*link && *link != victim) link = &(*link)->bucket_next;
-  assert(*link == victim);
-  *link = victim->bucket_next;
-  assert(indexed_cache_count[cache_id] > 0);
-  assert(indexed_cache_bytes[cache_id] >= victim->retained_bytes);
-  --indexed_cache_count[cache_id];
-  indexed_cache_bytes[cache_id] -= victim->retained_bytes;
-  if (cache_id == 1) {
-    for (size_t bucket = 0; bucket < INDEXED_CACHE_BUCKETS; ++bucket) {
-      for (struct indexed_set* set = indexed_cache_buckets[0][bucket]; set;
-           set = set->bucket_next) {
-        for (size_t i = 0; i < INDEXED_COMPARISON_CACHE_SIZE; ++i) {
-          if (set->compared_with[i] == victim) set->compared_with[i] = NULL;
-        }
-      }
-    }
-  }
-  _free(victim->values);
-  _free(victim->dense_values);
-  _free(victim->projected_values);
-  _free(victim);
-}
-
-static int indexed_cache_make_room(unsigned cache_id, struct indexed_set* protected,
-                                   size_t additional_bytes, int adding_entry) {
-  if (additional_bytes > INDEXED_CACHE_BYTE_LIMIT) return -1;
-  while ((adding_entry && indexed_cache_count[cache_id] >= INDEXED_CACHE_SIZE) ||
-         indexed_cache_bytes[cache_id] > INDEXED_CACHE_BYTE_LIMIT - additional_bytes) {
-    struct indexed_set* victim = indexed_cache_oldest[cache_id];
-    if (victim == protected) victim = victim->newer;
-    if (!victim) return -1;
-    indexed_cache_remove(victim, cache_id);
-  }
-  return 0;
-}
-
-static void indexed_cache_account_replace(struct indexed_set* set, size_t old_bytes,
-                                          size_t new_bytes) {
-  if (new_bytes >= old_bytes) {
-    size_t added = new_bytes - old_bytes;
-    set->retained_bytes += added;
-    indexed_cache_bytes[set->cache_id] += added;
-    assert(indexed_cache_bytes[set->cache_id] <= INDEXED_CACHE_BYTE_LIMIT);
-  } else {
-    size_t removed = old_bytes - new_bytes;
-    assert(set->retained_bytes >= removed);
-    assert(indexed_cache_bytes[set->cache_id] >= removed);
-    set->retained_bytes -= removed;
-    indexed_cache_bytes[set->cache_id] -= removed;
-  }
-}
-
-static int indexed_cache_get(const char* source, unsigned cache_id, struct indexed_set** result) {
-  assert(cache_id < 2);
-  const char* str = strncmp(source, "set:", 4) == 0 ? source + 4 : source;
-  if (strncmp(str, "set:", 4) == 0) return -1;
-  for (size_t i = 0; i < FORMAT_HEADER_LEN + 4; ++i) {
-    if (str[i] == '\0') return -1;
-  }
-
-  uint32_t fingerprint = indexed_fingerprint(str);
-  unsigned bucket = fingerprint & (INDEXED_CACHE_BUCKETS - 1);
-  for (struct indexed_set* set = indexed_cache_buckets[cache_id][bucket]; set;
-       set = set->bucket_next) {
-    if (set->fingerprint != fingerprint || strcmp(set->str, str) != 0) continue;
-    indexed_cache_touch(set, cache_id);
-    *result = set;
-    return set->invalid ? -1 : 0;
-  }
-
-  size_t str_len = strlen(str);
-  struct indexed_set meta = {0};
-  if (indexed_meta_init(str, &meta) < 0) return -1;
-  if (str_len > SIZE_MAX - sizeof(struct indexed_set) - 1) return -1;
-  size_t allocation_size = sizeof(struct indexed_set) + str_len + 1;
-  if (indexed_cache_make_room(cache_id, NULL, allocation_size, 1) < 0) return 1;
-
-  struct indexed_set* set = xmalloc(allocation_size);
-  memset(set, 0, sizeof(*set));
-  set->str = (char*)(set + 1);
-  memcpy(set->str, str, str_len + 1);
-  set->str_len = meta.str_len;
-  set->input_len = meta.input_len;
-  set->byte_count = meta.byte_count;
-  set->count = meta.count;
-  set->bpp = meta.bpp;
-  set->fingerprint = fingerprint;
-  set->bucket = bucket;
-  set->cache_id = cache_id;
-  set->retained_bytes = allocation_size;
-
-  ++indexed_cache_count[cache_id];
-  indexed_cache_bytes[cache_id] += allocation_size;
-  assert(indexed_cache_bytes[cache_id] <= INDEXED_CACHE_BYTE_LIMIT);
-
-  set->bucket_next = indexed_cache_buckets[cache_id][bucket];
-  indexed_cache_buckets[cache_id][bucket] = set;
-  set->older = indexed_cache_newest[cache_id];
-  if (indexed_cache_newest[cache_id]) {
-    indexed_cache_newest[cache_id]->newer = set;
-  } else {
-    indexed_cache_oldest[cache_id] = set;
-  }
-  indexed_cache_newest[cache_id] = set;
-  *result = set;
-  return 0;
-}
-
-static int indexed_comparison_lookup(struct indexed_set* set1, struct indexed_set* set2,
-                                     int* result) {
-  for (size_t i = 0; i < INDEXED_COMPARISON_CACHE_SIZE; ++i) {
-    if (set1->compared_with[i] != set2) continue;
-    *result = set1->comparison_results[i];
-    return 1;
-  }
-  return 0;
-}
-
-static int indexed_comparison_store(struct indexed_set* set1, struct indexed_set* set2,
-                                    int result) {
-  unsigned slot = set1->comparison_next++ & (INDEXED_COMPARISON_CACHE_SIZE - 1);
-  set1->compared_with[slot] = set2;
-  set1->comparison_results[slot] = result;
-  return result;
-}
-
-static size_t value_slot_position(size_t index, size_t capacity) {
-  uint64_t mixed = (uint64_t)index + UINT64_C(0x9e3779b97f4a7c15);
-  mixed = (mixed ^ (mixed >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
-  mixed = (mixed ^ (mixed >> 27)) * UINT64_C(0x94d049bb133111eb);
-  mixed ^= mixed >> 31;
-  return (size_t)mixed & (capacity - 1);
-}
-
-static int value_cache_lookup(const struct indexed_set* set, size_t index, unsigned* value) {
-  if (set->value_capacity == 0) return 0;
-  size_t position = value_slot_position(index, set->value_capacity);
-  while (set->values[position].index_plus_one != 0) {
-    if (set->values[position].index_plus_one == index + 1) {
-      *value = set->values[position].value;
-      return 1;
-    }
-    position = (position + 1) & (set->value_capacity - 1);
-  }
-  return 0;
-}
-
-static int value_cache_resize(struct indexed_set* set, size_t capacity) {
-  if (capacity == 0 || (capacity & (capacity - 1)) != 0 ||
-      capacity > SIZE_MAX / sizeof(*set->values))
-    return -1;
-  size_t bytes = capacity * sizeof(*set->values);
-  if (bytes > set->value_bytes &&
-      indexed_cache_make_room(set->cache_id, set, bytes - set->value_bytes, 0) < 0)
-    return -1;
-
-  struct value_slot* values = xmalloc(bytes);
-  memset(values, 0, bytes);
-
-  for (size_t i = 0; i < set->value_capacity; ++i) {
-    if (set->values[i].index_plus_one == 0) continue;
-    size_t index = set->values[i].index_plus_one - 1;
-    size_t position = value_slot_position(index, capacity);
-    while (values[position].index_plus_one != 0) position = (position + 1) & (capacity - 1);
-    values[position] = set->values[i];
-  }
-
-  _free(set->values);
-  set->values = values;
-  set->value_capacity = capacity;
-  indexed_cache_account_replace(set, set->value_bytes, bytes);
-  set->value_bytes = bytes;
-  return 0;
-}
-
-static int value_cache_grow(struct indexed_set* set) {
-  if (set->value_capacity > SIZE_MAX / 2) return -1;
-  size_t capacity =
-      set->value_capacity == 0 ? VALUE_CACHE_INITIAL_CAPACITY : set->value_capacity * 2;
-  return value_cache_resize(set, capacity);
-}
-
-static int value_cache_reserve(struct indexed_set* set, size_t expected_values) {
-  size_t capacity = set->value_capacity == 0 ? VALUE_CACHE_INITIAL_CAPACITY : set->value_capacity;
-  while (capacity - capacity / 4 < expected_values) {
-    if (capacity > SIZE_MAX / 2) return -1;
-    capacity *= 2;
-  }
-  return capacity == set->value_capacity ? 0 : value_cache_resize(set, capacity);
-}
-
-static int value_cache_insert(struct indexed_set* set, size_t index, unsigned value) {
-  if (set->value_count == SIZE_MAX) return -1;
-  if (set->value_capacity == 0 ||
-      set->value_count + 1 > set->value_capacity - set->value_capacity / 4) {
-    if (value_cache_grow(set) < 0) return -1;
-  }
-
-  size_t position = value_slot_position(index, set->value_capacity);
-  while (set->values[position].index_plus_one != 0)
-    position = (position + 1) & (set->value_capacity - 1);
-  set->values[position].index_plus_one = index + 1;
-  set->values[position].value = value;
-  ++set->value_count;
-  return 0;
-}
-
-static int indexed_byte_at(const struct indexed_set* set, size_t index, unsigned* byte) {
-  if (index >= set->byte_count) return -1;
-  const unsigned char* input = (const unsigned char*)set->str + FORMAT_HEADER_LEN;
-  size_t offset = index / 3 * 4;
-  unsigned within = (unsigned)(index % 3);
-  int v0 = base64_value(input[offset]);
-  int v1 = base64_value(input[offset + 1]);
-  if (v0 < 0 || v1 < 0) return -1;
-  if (within == 0) {
-    *byte = (unsigned)((v0 << 2) | (v1 >> 4));
-    return 0;
-  }
-
-  int v2 = base64_value(input[offset + 2]);
-  if (v2 < 0) return -1;
-  if (within == 1) {
-    *byte = (unsigned)(((v1 & 0x0f) << 4) | (v2 >> 2));
-    return 0;
-  }
-
-  int v3 = base64_value(input[offset + 3]);
-  if (v3 < 0) return -1;
-  *byte = (unsigned)(((v2 & 0x03) << 6) | v3);
-  return 0;
-}
-
-static int indexed_value(struct indexed_set* set, size_t index, unsigned* value) {
-  if (set->invalid || index >= set->count) return -1;
-  if (set->dense_values) {
-    *value = set->dense_values[index];
-    return 0;
-  }
-  if (value_cache_lookup(set, index, value)) return 0;
-
-  /* Fixed-width packing makes an element independently addressable: at most
-   * five decoded bytes cover any 10..32-bit value. */
-  size_t bit_offset = index * set->bpp;
-  size_t byte_offset = bit_offset / 8;
-  unsigned shift = (unsigned)(bit_offset % 8);
-  unsigned byte_count = (shift + set->bpp + 7) / 8;
-  uint64_t bits = 0;
-  for (unsigned i = 0; i < byte_count; ++i) {
-    unsigned byte;
-    if (indexed_byte_at(set, byte_offset + i, &byte) < 0) {
-      set->invalid = 1;
-      return -1;
-    }
-    bits |= (uint64_t)byte << (i * 8);
-  }
-
-  uint64_t mask = set->bpp < 32 ? (UINT64_C(1) << set->bpp) - 1 : UINT32_MAX;
-  unsigned current = (unsigned)(bits >> shift & mask);
-  unsigned neighbor;
-  if ((index > 0 && value_cache_lookup(set, index - 1, &neighbor) && neighbor >= current) ||
-      (index + 1 < set->count && value_cache_lookup(set, index + 1, &neighbor) &&
-       current >= neighbor)) {
-    set->invalid = 1;
-    return -1;
-  }
-
-  if (value_cache_insert(set, index, current) < 0) {
-    set->cache_limited = 1;
-    return -1;
-  }
-  *value = current;
+  meta->str = str;
+  meta->len = 0;
+  meta->bpp = bpp;
   return 0;
 }
 
@@ -746,36 +395,104 @@ static inline int decode_writer_put(struct decode_writer* writer, uint32_t bytes
 static int decode_base64_bytes(const char* input, size_t input_len, unsigned char* output,
                                size_t output_len) {
   unsigned char* const output_end = output + output_len;
-  for (size_t offset = 0; offset < input_len; offset += 4) {
+  size_t offset = 0;
+  for (; offset + 4 < input_len; offset += 4) {
     int v0 = base64_value((unsigned char)input[offset]);
     int v1 = base64_value((unsigned char)input[offset + 1]);
-    int last = offset + 4 == input_len;
-    if (v0 < 0 || v1 < 0 || output == output_end) return -1;
-
-    *output++ = (unsigned char)((v0 << 2) | (v1 >> 4));
-    if (input[offset + 2] == '=') {
-      if (!last || input[offset + 3] != '=' || (v1 & 0x0f) != 0) return -1;
-      continue;
-    }
-
     int v2 = base64_value((unsigned char)input[offset + 2]);
-    if (v2 < 0 || output == output_end) return -1;
-    *output++ = (unsigned char)(((v1 & 0x0f) << 4) | (v2 >> 2));
-    if (input[offset + 3] == '=') {
-      if (!last || (v2 & 0x03) != 0) return -1;
-      continue;
-    }
-
     int v3 = base64_value((unsigned char)input[offset + 3]);
-    if (v3 < 0 || output == output_end) return -1;
-    *output++ = (unsigned char)(((v2 & 0x03) << 6) | v3);
+    if ((v0 | v1 | v2 | v3) < 0) return -1;
+    output[0] = (unsigned char)((v0 << 2) | (v1 >> 4));
+    output[1] = (unsigned char)(((v1 & 0x0f) << 4) | (v2 >> 2));
+    output[2] = (unsigned char)(((v2 & 0x03) << 6) | v3);
+    output += 3;
   }
+
+  int v0 = base64_value((unsigned char)input[offset]);
+  int v1 = base64_value((unsigned char)input[offset + 1]);
+  if ((v0 | v1) < 0 || output == output_end) return -1;
+  *output++ = (unsigned char)((v0 << 2) | (v1 >> 4));
+
+  if (input[offset + 2] == '=') {
+    return input[offset + 3] == '=' && (v1 & 0x0f) == 0 && output == output_end ? 0 : -1;
+  }
+
+  int v2 = base64_value((unsigned char)input[offset + 2]);
+  if (v2 < 0 || output == output_end) return -1;
+  *output++ = (unsigned char)(((v1 & 0x0f) << 4) | (v2 >> 2));
+  if (input[offset + 3] == '=') return (v2 & 0x03) == 0 && output == output_end ? 0 : -1;
+
+  int v3 = base64_value((unsigned char)input[offset + 3]);
+  if (v3 < 0 || output == output_end) return -1;
+  *output++ = (unsigned char)(((v2 & 0x03) << 6) | v3);
   return output == output_end ? 0 : -1;
 }
 
-static int decode_set(const char* str, struct decoded_set* decoded) {
-  if (strncmp(str, "set:", 4) == 0) str += 4;
-  size_t str_len = strlen(str);
+static inline int decode_base64_triplet(const char* input, uint32_t* triplet) {
+  int v0 = base64_value((unsigned char)input[0]);
+  int v1 = base64_value((unsigned char)input[1]);
+  int v2 = base64_value((unsigned char)input[2]);
+  int v3 = base64_value((unsigned char)input[3]);
+  if ((v0 | v1 | v2 | v3) < 0) return -1;
+
+  *triplet = (uint32_t)((v0 << 2) | (v1 >> 4)) |
+             (uint32_t)(((v1 & 0x0f) << 4) | (v2 >> 2)) << 8 |
+             (uint32_t)(((v2 & 0x03) << 6) | v3) << 16;
+  return 0;
+}
+
+static int decode_base64_u32(const char* input, size_t input_len, unsigned* hashes,
+                             size_t count) {
+  size_t blocks = count / 3;
+  size_t written = 0;
+  unsigned previous = 0;
+  int has_previous = 0;
+
+  for (size_t block = 0; block < blocks; ++block) {
+    uint32_t t0, t1, t2, t3;
+    if (decode_base64_triplet(input, &t0) < 0 ||
+        decode_base64_triplet(input + 4, &t1) < 0 ||
+        decode_base64_triplet(input + 8, &t2) < 0 ||
+        decode_base64_triplet(input + 12, &t3) < 0)
+      return -1;
+
+    unsigned value0 = (unsigned)(t0 | ((t1 & UINT32_C(0xff)) << 24));
+    unsigned value1 = (unsigned)((t1 >> 8) | ((t2 & UINT32_C(0xffff)) << 16));
+    unsigned value2 = (unsigned)((t2 >> 16) | (t3 << 8));
+    if ((has_previous && previous >= value0) || value0 >= value1 || value1 >= value2) return -1;
+
+    hashes[written++] = value0;
+    hashes[written++] = value1;
+    hashes[written++] = value2;
+    previous = value2;
+    has_previous = 1;
+    input += 16;
+    input_len -= 16;
+  }
+
+  size_t remaining = count - written;
+  if (remaining != 0) {
+    size_t byte_count = remaining * sizeof(*hashes);
+    unsigned char tail[2 * sizeof(*hashes)];
+    if (decode_base64_bytes(input, input_len, tail, byte_count) < 0) return -1;
+    for (size_t i = 0; i < remaining; ++i, ++written) {
+      const unsigned char* bytes = tail + i * 4;
+      unsigned current = (unsigned)bytes[0] | ((unsigned)bytes[1] << 8) |
+                         ((unsigned)bytes[2] << 16) | ((unsigned)bytes[3] << 24);
+      if (has_previous && previous >= current) return -1;
+      hashes[written] = current;
+      previous = current;
+      has_previous = 1;
+    }
+  } else if (input_len != 0) {
+    return -1;
+  }
+
+  return 0;
+}
+
+static int decode_set_sized(const char* str, size_t str_len, struct decoded_set* decoded) {
+  if (str_len == 0) str_len = strlen(str);
   if (str_len <= FORMAT_HEADER_LEN) return -1;
   if (strncmp(str, FORMAT_PREFIX, sizeof(FORMAT_PREFIX) - 1) != 0) return -1;
   if (str[2] < '0' || str[2] > '9' || str[3] < '0' || str[3] > '9') return -1;
@@ -801,15 +518,32 @@ static int decode_set(const char* str, struct decoded_set* decoded) {
   unsigned* hashes = xmalloc(count * sizeof(*hashes));
 #if UINT_MAX == UINT32_MAX
   if (bpp == 32 && sizeof(unsigned) == 4) {
-    if (decode_base64_bytes(input, input_len, (unsigned char*)hashes, byte_count) < 0) goto invalid;
-#if !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
-    __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
-    for (size_t i = 0; i < count; ++i) {
-      const unsigned char* bytes = (const unsigned char*)hashes + i * 4;
-      hashes[i] = (unsigned)bytes[0] | ((unsigned)bytes[1] << 8) | ((unsigned)bytes[2] << 16) |
-                  ((unsigned)bytes[3] << 24);
+    if (decode_base64_u32(input, input_len, hashes, count) < 0) goto invalid;
+    if (decoded) {
+      decoded->hashes = hashes;
+      decoded->count = count;
+      decoded->bpp = bpp;
     }
-#endif
+    return 0;
+  }
+
+  /* Byte-aligned widths can bypass the generic bit reservoir. Decode the
+   * Base64 payload into the front of the final allocation, then expand 16-
+   * and 24-bit values backwards so unread packed bytes are never overwritten. */
+  if ((bpp == 16 || bpp == 24) && sizeof(unsigned) == 4) {
+    if (decode_base64_bytes(input, input_len, (unsigned char*)hashes, byte_count) < 0) goto invalid;
+    if (bpp == 16) {
+      for (size_t i = count; i > 0; --i) {
+        const unsigned char* bytes = (const unsigned char*)hashes + (i - 1) * 2;
+        hashes[i - 1] = (unsigned)bytes[0] | ((unsigned)bytes[1] << 8);
+      }
+    } else if (bpp == 24) {
+      for (size_t i = count; i > 0; --i) {
+        const unsigned char* bytes = (const unsigned char*)hashes + (i - 1) * 3;
+        hashes[i - 1] = (unsigned)bytes[0] | ((unsigned)bytes[1] << 8) |
+                        ((unsigned)bytes[2] << 16);
+      }
+    }
     for (size_t i = 1; i < count; ++i) {
       if (hashes[i - 1] >= hashes[i]) goto invalid;
     }
@@ -873,39 +607,6 @@ invalid:
   return -1;
 }
 
-static int indexed_decode_all(struct indexed_set* set) {
-  if (set->invalid) return -1;
-  if (set->dense_values) return 0;
-
-  size_t dense_bytes = set->count * sizeof(*set->dense_values);
-  if (dense_bytes > set->value_bytes &&
-      indexed_cache_make_room(set->cache_id, set, dense_bytes - set->value_bytes, 0) < 0) {
-    set->cache_limited = 1;
-    return -1;
-  }
-
-  struct decoded_set decoded;
-  if (decode_set(set->str, &decoded) < 0) {
-    set->invalid = 1;
-    return -1;
-  }
-  if (decoded.count != set->count || decoded.bpp != set->bpp) {
-    _free(decoded.hashes);
-    set->invalid = 1;
-    return -1;
-  }
-
-  _free(set->values);
-  set->values = NULL;
-  set->value_capacity = 0;
-  set->value_count = 0;
-  indexed_cache_account_replace(set, set->value_bytes, dense_bytes);
-  set->value_bytes = 0;
-  set->dense_bytes = dense_bytes;
-  set->dense_values = decoded.hashes;
-  return 0;
-}
-
 /* Reduce a sorted set of (bpp + 1)-bit values to a sorted set of bpp-bit values. */
 static size_t downsample_set(size_t count, const unsigned* hashes, unsigned* result, unsigned bpp) {
   unsigned mask = (UINT32_C(1) << bpp) - 1;
@@ -947,8 +648,59 @@ static size_t downsample_set(size_t count, const unsigned* hashes, unsigned* res
   return (size_t)(output - result);
 }
 
+static void downsample_radix_to(struct decoded_set* set, unsigned target_bpp) {
+  unsigned* original = set->hashes;
+  unsigned* scratch = xmalloc(set->count * sizeof(*scratch));
+  unsigned mask = (UINT32_C(1) << target_bpp) - 1;
+  for (size_t i = 0; i < set->count; ++i) original[i] &= mask;
+
+  unsigned* source = original;
+  unsigned* destination = scratch;
+  unsigned passes = (target_bpp + 7) / 8;
+  for (unsigned pass = 0; pass < passes; ++pass) {
+    size_t offsets[256] = {0};
+    unsigned shift = pass * 8;
+    for (size_t i = 0; i < set->count; ++i) ++offsets[(source[i] >> shift) & 0xffu];
+
+    size_t position = 0;
+    for (size_t i = 0; i < 256; ++i) {
+      size_t bucket_count = offsets[i];
+      offsets[i] = position;
+      position += bucket_count;
+    }
+    for (size_t i = 0; i < set->count; ++i) {
+      unsigned value = source[i];
+      destination[offsets[(value >> shift) & 0xffu]++] = value;
+    }
+
+    unsigned* swap = source;
+    source = destination;
+    destination = swap;
+  }
+
+  size_t unique_count = 1;
+  for (size_t i = 1; i < set->count; ++i) {
+    if (source[i] != source[unique_count - 1]) source[unique_count++] = source[i];
+  }
+
+  if (source == original) {
+    _free(scratch);
+  } else {
+    _free(original);
+    set->hashes = scratch;
+  }
+  set->count = unique_count;
+  set->bpp = target_bpp;
+}
+
 static void downsample_to(struct decoded_set* set, unsigned target_bpp) {
   if (set->bpp == target_bpp) return;
+
+  unsigned passes = (target_bpp + 7) / 8;
+  if (set->bpp - target_bpp > passes) {
+    downsample_radix_to(set, target_bpp);
+    return;
+  }
 
   unsigned* original = set->hashes;
   unsigned* scratch = xmalloc(set->count * sizeof(*scratch));
@@ -973,73 +725,130 @@ static void downsample_to(struct decoded_set* set, unsigned target_bpp) {
   return;
 }
 
-static int sorted_subset(const unsigned* small, size_t small_count, const unsigned* large,
-                         size_t large_count);
-
-/* Preserve comparison semantics when an otherwise valid representation is too large to retain
- * within the cache budget. This path owns only transient decoded arrays. */
-static int full_rpmsetcmp(const char* str1, const char* str2) {
-  struct decoded_set set1;
-  struct decoded_set set2;
-  if (decode_set(str1, &set1) < 0) return -3;
-  if (decode_set(str2, &set2) < 0) {
-    _free(set1.hashes);
-    return -4;
-  }
-
-  unsigned target_bpp = set1.bpp < set2.bpp ? set1.bpp : set2.bpp;
-  downsample_to(&set1, target_bpp);
-  downsample_to(&set2, target_bpp);
-
-  int result;
-  if (set1.count == set2.count)
-    result = memcmp(set1.hashes, set2.hashes, set1.count * sizeof(*set1.hashes)) == 0 ? 0 : -2;
-  else if (set1.count > set2.count)
-    result = sorted_subset(set2.hashes, set2.count, set1.hashes, set1.count) ? 1 : -2;
-  else
-    result = sorted_subset(set1.hashes, set1.count, set2.hashes, set2.count) ? -1 : -2;
-
-  _free(set1.hashes);
-  _free(set2.hashes);
-  return result;
+static uint32_t decoded_cache_fingerprint(const struct set_meta* meta, unsigned target_bpp) {
+  const unsigned char* str = (const unsigned char*)meta->str;
+  uint32_t fingerprint = (uint32_t)str[4] | ((uint32_t)str[5] << 8) |
+                         ((uint32_t)str[6] << 16) | ((uint32_t)str[7] << 24);
+  fingerprint ^= meta->bpp * UINT32_C(0x27d4eb2d);
+  fingerprint ^= target_bpp * UINT32_C(0x85ebca6b);
+  fingerprint ^= fingerprint >> 11;
+  fingerprint *= UINT32_C(0x9e3779b1);
+  fingerprint ^= fingerprint >> 16;
+  return fingerprint;
 }
 
-static int indexed_project(struct indexed_set* set, unsigned target_bpp, const unsigned** values,
-                           size_t* count) {
-  if (indexed_decode_all(set) < 0) return -1;
-  if (target_bpp == set->bpp) {
-    *values = set->dense_values;
-    *count = set->count;
-    return 0;
+static void decoded_cache_touch(struct decoded_cache_entry* entry, unsigned cache_id) {
+  if (entry == decoded_cache_newest[cache_id]) return;
+
+  if (entry->newer) entry->newer->older = entry->older;
+  if (entry->older) entry->older->newer = entry->newer;
+  if (entry == decoded_cache_oldest[cache_id]) decoded_cache_oldest[cache_id] = entry->newer;
+
+  entry->newer = NULL;
+  entry->older = decoded_cache_newest[cache_id];
+  decoded_cache_newest[cache_id]->newer = entry;
+  decoded_cache_newest[cache_id] = entry;
+}
+
+static void decoded_cache_remove(struct decoded_cache_entry* victim, unsigned cache_id) {
+  if (victim->newer)
+    victim->newer->older = victim->older;
+  else
+    decoded_cache_newest[cache_id] = victim->older;
+  if (victim->older)
+    victim->older->newer = victim->newer;
+  else
+    decoded_cache_oldest[cache_id] = victim->newer;
+
+  struct decoded_cache_entry** link = &decoded_cache_buckets[cache_id][victim->bucket];
+  while (*link && *link != victim) link = &(*link)->bucket_next;
+  assert(*link == victim);
+  *link = victim->bucket_next;
+  assert(decoded_cache_count[cache_id] > 0);
+  --decoded_cache_count[cache_id];
+
+  _free(victim->hashes);
+  _free(victim);
+}
+
+static void decoded_cache_reset_pair_identities(void) {
+  for (unsigned bucket = 0; bucket < DECODED_CACHE_BUCKETS; ++bucket) {
+    for (struct decoded_cache_entry* provider = decoded_cache_buckets[0][bucket]; provider;
+         provider = provider->bucket_next) {
+      for (unsigned i = 0; i < PAIR_CACHE_SIZE; ++i) provider->pairs[i].other_identity = 0;
+    }
   }
-  if (set->projected_values && set->projected_bpp == target_bpp) {
-    *values = set->projected_values;
-    *count = set->projected_count;
+  decoded_cache_next_identity = 1;
+}
+
+static int cache_decode_set(const struct set_meta* meta, unsigned target_bpp, unsigned cache_id,
+                            const unsigned** hashes, size_t* count,
+                            struct decoded_cache_entry** cache_entry) {
+  assert(cache_id < 2);
+  assert(target_bpp <= meta->bpp);
+
+  uint32_t fingerprint = decoded_cache_fingerprint(meta, target_bpp);
+  unsigned bucket = fingerprint & (DECODED_CACHE_BUCKETS - 1);
+  for (struct decoded_cache_entry* entry = decoded_cache_buckets[cache_id][bucket]; entry;
+       entry = entry->bucket_next) {
+    if (entry->fingerprint != fingerprint || entry->target_bpp != target_bpp ||
+        strcmp(entry->str, meta->str) != 0)
+      continue;
+
+    decoded_cache_touch(entry, cache_id);
+    *hashes = entry->hashes;
+    *count = entry->count;
+    *cache_entry = entry;
     return 0;
   }
 
-  size_t projected_bytes = set->count * sizeof(*set->projected_values);
-  if (projected_bytes > set->projected_bytes &&
-      indexed_cache_make_room(set->cache_id, set, projected_bytes - set->projected_bytes, 0) < 0) {
-    set->cache_limited = 1;
+  size_t len = strlen(meta->str);
+  size_t input_len = len - FORMAT_HEADER_LEN;
+  if (input_len == 0 || input_len % 4 != 0 || input_len / 4 > SIZE_MAX / 3) return -1;
+
+  struct decoded_set decoded;
+  if (decode_set_sized(meta->str, len, &decoded) < 0) return -1;
+  if (decoded.bpp != meta->bpp) {
+    _free(decoded.hashes);
     return -1;
   }
-  _free(set->projected_values);
-  set->projected_values = xmalloc(projected_bytes);
-  memcpy(set->projected_values, set->dense_values, projected_bytes);
-  struct decoded_set projected = {
-      .hashes = set->projected_values,
-      .count = set->count,
-      .bpp = set->bpp,
-  };
-  downsample_to(&projected, target_bpp);
-  indexed_cache_account_replace(set, set->projected_bytes, projected_bytes);
-  set->projected_bytes = projected_bytes;
-  set->projected_values = projected.hashes;
-  set->projected_count = projected.count;
-  set->projected_bpp = target_bpp;
-  *values = projected.hashes;
-  *count = projected.count;
+  downsample_to(&decoded, target_bpp);
+
+  if (len > SIZE_MAX - sizeof(struct decoded_cache_entry) - 1) {
+    _free(decoded.hashes);
+    return -1;
+  }
+  struct decoded_cache_entry* entry = xmalloc(sizeof(*entry) + len + 1);
+  memset(entry, 0, sizeof(*entry));
+  entry->str = (char*)(entry + 1);
+  memcpy(entry->str, meta->str, len + 1);
+  entry->hashes = decoded.hashes;
+  entry->len = len;
+  entry->count = decoded.count;
+  entry->fingerprint = fingerprint;
+  if (decoded_cache_next_identity == 0) decoded_cache_reset_pair_identities();
+  entry->identity = decoded_cache_next_identity++;
+  entry->bucket = bucket;
+  entry->target_bpp = target_bpp;
+
+  if (decoded_cache_count[cache_id] == DECODED_CACHE_SIZE) {
+    decoded_cache_remove(decoded_cache_oldest[cache_id], cache_id);
+  }
+
+  entry->bucket_next = decoded_cache_buckets[cache_id][bucket];
+  decoded_cache_buckets[cache_id][bucket] = entry;
+  entry->older = decoded_cache_newest[cache_id];
+  if (decoded_cache_newest[cache_id]) {
+    decoded_cache_newest[cache_id]->newer = entry;
+  } else {
+    decoded_cache_oldest[cache_id] = entry;
+  }
+  decoded_cache_newest[cache_id] = entry;
+  ++decoded_cache_count[cache_id];
+
+  *hashes = entry->hashes;
+  *count = entry->count;
+  *cache_entry = entry;
   return 0;
 }
 
@@ -1093,153 +902,48 @@ static int sorted_subset(const unsigned* small, size_t small_count, const unsign
   return 1;
 }
 
-static int indexed_step_lower_bound(struct indexed_set* set, size_t first, size_t last,
-                                    unsigned value, size_t jump, size_t* result) {
-  if (first == last) {
-    *result = first;
-    return 0;
-  }
-
-  unsigned current;
-  if (indexed_value(set, first, &current) < 0) return -1;
-  if (current >= value) {
-    *result = first;
-    return 0;
-  }
-  if (jump == 0) jump = 1;
-
-  size_t position = first;
-  size_t step = jump;
-  while (step != 0) {
-    if (step > last - position - 1) {
-      step /= 2;
-      continue;
-    }
-
-    size_t next = position + step;
-    if (indexed_value(set, next, &current) < 0) return -1;
-    if (current < value)
-      position = next;
-    else
-      step /= 2;
-  }
-
-  *result = position + 1;
-  return 0;
-}
-
-static int indexed_sorted_subset(struct indexed_set* small, struct indexed_set* large) {
-  size_t large_index = 0;
-  size_t jump = large->count / small->count;
-
-  /* Every value of the candidate subset is needed for a successful comparison,
-   * so decode that side with the faster streaming decoder and retain it. */
-  if (indexed_decode_all(small) < 0) return -1;
-
-  if (jump < 4) {
-    if (indexed_decode_all(large) < 0) return -1;
-    return sorted_subset(small->dense_values, small->count, large->dense_values, large->count);
-  }
-
-  size_t probes_per_value = 2;
-  for (size_t span = jump; span > 1; span = (span + 1) / 2) ++probes_per_value;
-  size_t expected_values =
-      small->count > SIZE_MAX / probes_per_value ? large->count : small->count * probes_per_value;
-  if (expected_values > large->count) expected_values = large->count;
-  if (!large->dense_values && value_cache_reserve(large, expected_values) < 0) {
-    large->cache_limited = 1;
-    return -1;
-  }
-
-  for (size_t small_index = 0; small_index < small->count; ++small_index) {
-    unsigned small_value;
-    if (indexed_value(small, small_index, &small_value) < 0) return -1;
-    if (indexed_step_lower_bound(large, large_index, large->count, small_value, jump,
-                                 &large_index) < 0)
-      return -1;
-    if (large_index == large->count) return 0;
-
-    unsigned large_value;
-    if (indexed_value(large, large_index, &large_value) < 0) return -1;
-    if (large_value != small_value) return 0;
-    ++large_index;
-  }
-
-  return 1;
-}
-
-static int projected_rpmsetcmp(struct indexed_set* set1, struct indexed_set* set2) {
-  unsigned target_bpp = set1->bpp < set2->bpp ? set1->bpp : set2->bpp;
-  const unsigned* values1;
-  const unsigned* values2;
-  size_t count1;
-  size_t count2;
-  if (indexed_project(set1, target_bpp, &values1, &count1) < 0)
-    return set1->cache_limited ? RPMSETCMP_FALLBACK : -3;
-  if (indexed_project(set2, target_bpp, &values2, &count2) < 0)
-    return set2->cache_limited ? RPMSETCMP_FALLBACK : -4;
-
-  if (count1 == count2) return memcmp(values1, values2, count1 * sizeof(*values1)) == 0 ? 0 : -2;
-  if (count1 > count2) return sorted_subset(values2, count2, values1, count1) ? 1 : -2;
-  return sorted_subset(values1, count1, values2, count2) ? -1 : -2;
-}
-
 static int rpmsetcmp_locked(const char* str1, const char* str2) {
-  struct indexed_set* set1;
-  struct indexed_set* set2;
-  int status = indexed_cache_get(str1, 0, &set1);
-  if (status < 0) return -3;
-  if (status > 0) return full_rpmsetcmp(str1, str2);
-  if (set1->cache_limited) return full_rpmsetcmp(str1, str2);
+  struct set_meta meta1;
+  if (set_meta_init(str1, &meta1) < 0) return -3;
 
-  status = indexed_cache_get(str2, 1, &set2);
-  if (status < 0) return -4;
-  if (status > 0) return full_rpmsetcmp(str1, str2);
-  if (set2->cache_limited) return full_rpmsetcmp(str1, str2);
+  struct set_meta meta2;
+  int meta2_status = set_meta_init(str2, &meta2);
+  unsigned target_bpp =
+      meta2_status == 0 && meta2.bpp < meta1.bpp ? meta2.bpp : meta1.bpp;
 
-  int cached_result;
-  if (indexed_comparison_lookup(set1, set2, &cached_result)) return cached_result;
+  const unsigned* hashes1;
+  size_t count1;
+  struct decoded_cache_entry* entry1;
+  if (cache_decode_set(&meta1, target_bpp, 0, &hashes1, &count1, &entry1) < 0) return -3;
+  if (meta2_status < 0) return -4;
 
-  if (set1->bpp != set2->bpp) {
-    int result = projected_rpmsetcmp(set1, set2);
-    if (result == RPMSETCMP_FALLBACK) return full_rpmsetcmp(str1, str2);
-    return result >= -2 ? indexed_comparison_store(set1, set2, result) : result;
-  }
-  if (strcmp(set1->str, set2->str) == 0) {
-    if (indexed_decode_all(set1) == 0) return indexed_comparison_store(set1, set2, 0);
-    return set1->cache_limited ? full_rpmsetcmp(str1, str2) : -3;
-  }
-  if (set1->count == set2->count) {
-    if (indexed_decode_all(set1) < 0) return set1->cache_limited ? full_rpmsetcmp(str1, str2) : -3;
-    if (indexed_decode_all(set2) < 0) return set2->cache_limited ? full_rpmsetcmp(str1, str2) : -4;
-    int result = memcmp(set1->dense_values, set2->dense_values,
-                        set1->count * sizeof(*set1->dense_values)) == 0
-                     ? 0
-                     : -2;
-    return indexed_comparison_store(set1, set2, result);
+  const unsigned* hashes2;
+  size_t count2;
+  struct decoded_cache_entry* entry2;
+  if (cache_decode_set(&meta2, target_bpp, 1, &hashes2, &count2, &entry2) < 0) return -4;
+
+  for (unsigned i = 0; i < PAIR_CACHE_SIZE; ++i) {
+    if (entry1->pairs[i].other_identity == entry2->identity) return entry1->pairs[i].result;
   }
 
-  int subset;
-  if (set1->count > set2->count) {
-    subset = indexed_sorted_subset(set2, set1);
-    if (subset > 0) return indexed_comparison_store(set1, set2, 1);
-  } else {
-    subset = indexed_sorted_subset(set1, set2);
-    if (subset > 0) return indexed_comparison_store(set1, set2, -1);
-  }
+  int result;
+  if (count1 == count2)
+    result = memcmp(hashes1, hashes2, count1 * sizeof(*hashes1)) == 0 ? 0 : -2;
+  else if (count1 > count2)
+    result = sorted_subset(hashes2, count2, hashes1, count1) ? 1 : -2;
+  else
+    result = sorted_subset(hashes1, count1, hashes2, count2) ? -1 : -2;
 
-  if (subset < 0) {
-    if (set1->cache_limited || set2->cache_limited) return full_rpmsetcmp(str1, str2);
-    if (set1->invalid) return -3;
-    if (set2->invalid) return -4;
-  }
-  return indexed_comparison_store(set1, set2, -2);
+  struct pair_cache_entry* pair = &entry1->pairs[entry1->pair_next++ % PAIR_CACHE_SIZE];
+  pair->other_identity = entry2->identity;
+  pair->result = result;
+  return result;
 }
 
 int rpmsetcmp(const char* str1, const char* str2) {
-  while (atomic_flag_test_and_set_explicit(&indexed_cache_lock, memory_order_acquire)) {
+  while (atomic_flag_test_and_set_explicit(&decoded_cache_lock, memory_order_acquire)) {
   }
   int result = rpmsetcmp_locked(str1, str2);
-  atomic_flag_clear_explicit(&indexed_cache_lock, memory_order_release);
+  atomic_flag_clear_explicit(&decoded_cache_lock, memory_order_release);
   return result;
 }

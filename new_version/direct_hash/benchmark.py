@@ -87,6 +87,19 @@ def median_build(api, symbols, bpp, calls, rounds):
     return statistics.median(samples)
 
 
+def median_add(api, symbols, calls, rounds):
+    samples = []
+    for _ in range(rounds):
+        values = []
+        start = time.perf_counter_ns()
+        for _ in range(calls):
+            values.append(api.new_with_symbols(symbols))
+        samples.append((time.perf_counter_ns() - start) / calls)
+        for value in values:
+            api.lib.set_free(value)
+    return statistics.median(samples)
+
+
 def median_cmp(api, provider, requirement, calls, rounds):
     expected = api.lib.rpmsetcmp(provider, requirement)
     if expected != 1 or api.lib.rpmsetcmp(provider, provider) != 0:
@@ -140,6 +153,20 @@ def median_cmp_cold(api, provider, requirement, calls, rounds):
     return statistics.median(samples)
 
 
+def verify_complete_decoding(api, provider, requirement):
+    if api.lib.rpmsetcmp(provider, requirement) != 1:
+        raise RuntimeError("provider must contain requirement")
+    if api.lib.rpmsetcmp(requirement, provider) != -1:
+        raise RuntimeError("requirement must be contained by provider")
+
+    payload_position = 4 + (len(provider) - 5) * 3 // 4
+    corrupted = provider[:payload_position] + b"!" + provider[payload_position + 1 :]
+    if api.lib.rpmsetcmp(corrupted, requirement) != -3:
+        raise RuntimeError("first operand was not decoded and validated completely")
+    if api.lib.rpmsetcmp(requirement, corrupted) != -4:
+        raise RuntimeError("second operand was not decoded and validated completely")
+
+
 def format_time(ns):
     return f"{ns / 1000:.2f} us"
 
@@ -147,6 +174,11 @@ def format_time(ns):
 def main():
     parser = argparse.ArgumentParser(description="Compare set9 and direct-hash set APIs")
     parser.add_argument("--symbols", type=int, default=1000)
+    parser.add_argument(
+        "--required",
+        type=int,
+        help="number of evenly distributed required symbols (default: every second symbol)",
+    )
     parser.add_argument("--bpp", type=int, default=32)
     parser.add_argument("--rounds", type=int, default=7)
     parser.add_argument("--fini-calls", type=int, default=5)
@@ -156,6 +188,8 @@ def main():
     args = parser.parse_args()
     if args.symbols < 2 or not 10 <= args.bpp <= 32:
         parser.error("symbols must be >= 2 and bpp must be in 10..32")
+    if args.required is not None and not 1 <= args.required < args.symbols:
+        parser.error("required must be in 1..symbols-1")
     if min(args.rounds, args.fini_calls, args.cmp_calls, args.cold_calls) < 1:
         parser.error("rounds and call counts must be positive")
 
@@ -165,7 +199,11 @@ def main():
     symbols = tuple(
         f"symbol_{i:08d}_version_ALT_{i % 97}".encode() for i in range(args.symbols)
     )
-    required = symbols[::2]
+    required = (
+        symbols[::2]
+        if args.required is None
+        else tuple(symbols[i * args.symbols // args.required] for i in range(args.required))
+    )
     apis = {
         "set9": SetAPI(BUILD / "libset9.so"),
         "direct": SetAPI(BUILD / "libdirect-hash.so"),
@@ -173,19 +211,41 @@ def main():
 
     gc.disable()
     try:
-        timings = {}
+        timings = {name: [[] for _ in range(5)] for name in apis}
         lengths = {}
+        encoded = {}
         for name, api in apis.items():
             provider = api.encode(symbols, args.bpp)
             requirement = api.encode(required, args.bpp)
+            encoded[name] = (provider, requirement)
             wire_format = "D1/base64" if provider.startswith(b"D1") else "golomb/base62"
             lengths[name] = (len(provider), wire_format)
-            timings[name] = (
-                median_fini(api, symbols, args.bpp, args.fini_calls, args.rounds),
-                median_build(api, symbols, args.bpp, args.fini_calls, args.rounds),
-                median_cmp_cold(api, provider, requirement, args.cold_calls, args.rounds),
-                median_cmp(api, provider, requirement, args.cmp_calls, args.rounds),
-            )
+
+        operations = (
+            lambda name, api: median_fini(api, symbols, args.bpp, args.fini_calls, 1),
+            lambda name, api: median_add(api, symbols, args.fini_calls, 1),
+            lambda name, api: median_build(api, symbols, args.bpp, args.fini_calls, 1),
+            lambda name, api: median_cmp_cold(
+                api, encoded[name][0], encoded[name][1], args.cold_calls, 1
+            ),
+            lambda name, api: median_cmp(
+                api, encoded[name][0], encoded[name][1], args.cmp_calls, 1
+            ),
+        )
+        names = tuple(apis)
+        for operation_index, operation in enumerate(operations):
+            for round_index in range(args.rounds):
+                order = names if round_index % 2 == 0 else tuple(reversed(names))
+                for name in order:
+                    timings[name][operation_index].append(operation(name, apis[name]))
+        timings = {
+            name: tuple(statistics.median(samples) for samples in operation_samples)
+            for name, operation_samples in timings.items()
+        }
+        # Run validation after timing: forked cold samples must inherit an empty
+        # decoded-set cache from the parent process.
+        for name, api in apis.items():
+            verify_complete_decoding(api, *encoded[name])
     finally:
         gc.enable()
 
@@ -194,7 +254,13 @@ def main():
     for name in apis:
         print(f"{name:<14} {lengths[name][0]:>9}  {lengths[name][1]}")
     print("\noperation                 set9       direct   direct/set9")
-    labels = ("set_fini only", "new+add+fini", "rpmsetcmp cold", "rpmsetcmp warm")
+    labels = (
+        "set_fini only",
+        "new+add (ctypes)",
+        "new+add+fini (ctypes)",
+        "rpmsetcmp cold",
+        "rpmsetcmp warm",
+    )
     for index, label in enumerate(labels):
         old = timings["set9"][index]
         new = timings["direct"][index]
