@@ -15,6 +15,13 @@
 #include "system.h"
 
 #define CACHE_SIZE 512
+#define SET_HASH_SEED UINT32_C(0x9e3779b9)
+
+#define ERROR_CODE 0xee
+#define EOF_CODE 0xff
+
+#define CACHE_FINGERPRINT_MULTIPLIER UINT32_C(0x9e3779b1)
+#define CACHE_TARGET_BPP_MULTIPLIER UINT32_C(0x85ebca6b)
 
 struct set {
   size_t cnt;
@@ -78,7 +85,7 @@ struct set* set_free(struct set* set) {
 // ---
 
 static unsigned hash(const char* str) {
-  unsigned hash = 0x9e3779b9;
+  unsigned hash = SET_HASH_SEED;
   const unsigned char* p = (const unsigned char*)str;
 
   while (*p) {
@@ -368,10 +375,10 @@ static int set_meta_init(const char* str, struct set_meta* meta) {
   if (Mshift >= bpp) return -3;
 
   *meta = (struct set_meta){
-      .str = str,
-      .payload = str + 2,
-      .bpp = bpp,
-      .Mshift = Mshift,
+    .str = str,
+    .payload = str + 2,
+    .bpp = bpp,
+    .Mshift = Mshift,
   };
 
   return 0;
@@ -395,80 +402,35 @@ static int set_meta_fini(struct set_meta* meta) {
   return 0;
 }
 // UCHAR_MAX == 255
-__extension__ static const unsigned char char_to_num[255 + 1] = {[0] = 0xff, /* конец строки */
+// clang-format off
+__extension__ static const unsigned char char_to_num[255 + 1] = {
+  [0] = EOF_CODE,  // конец строки
+  [1 ... ('0' - 1)] = ERROR_CODE,
 
-                                                                 [1 ...('0' - 1)] = 0xee,
+  ['0'] = 0, ['1'] = 1, ['2'] = 2, ['3'] = 3, ['4'] = 4,
+  ['5'] = 5, ['6'] = 6, ['7'] = 7, ['8'] = 8, ['9'] = 9,
 
-                                                                 ['0'] = 0,
-                                                                 ['1'] = 1,
-                                                                 ['2'] = 2,
-                                                                 ['3'] = 3,
-                                                                 ['4'] = 4,
-                                                                 ['5'] = 5,
-                                                                 ['6'] = 6,
-                                                                 ['7'] = 7,
-                                                                 ['8'] = 8,
-                                                                 ['9'] = 9,
+  [('9' + 1) ... ('A' - 1)] = ERROR_CODE,
 
-                                                                 [('9' + 1)...('A' - 1)] = 0xee,
+  ['A'] = 36, ['B'] = 37, ['C'] = 38, ['D'] = 39, ['E'] = 40,
+  ['F'] = 41, ['G'] = 42, ['H'] = 43, ['I'] = 44, ['J'] = 45,
+  ['K'] = 46, ['L'] = 47, ['M'] = 48, ['N'] = 49, ['O'] = 50,
+  ['P'] = 51, ['Q'] = 52, ['R'] = 53, ['S'] = 54, ['T'] = 55,
+  ['U'] = 56, ['V'] = 57, ['W'] = 58, ['X'] = 59, ['Y'] = 60,
+  ['Z'] = 61,
 
-                                                                 ['A'] = 36,
-                                                                 ['B'] = 37,
-                                                                 ['C'] = 38,
-                                                                 ['D'] = 39,
-                                                                 ['E'] = 40,
-                                                                 ['F'] = 41,
-                                                                 ['G'] = 42,
-                                                                 ['H'] = 43,
-                                                                 ['I'] = 44,
-                                                                 ['J'] = 45,
-                                                                 ['K'] = 46,
-                                                                 ['L'] = 47,
-                                                                 ['M'] = 48,
-                                                                 ['N'] = 49,
-                                                                 ['O'] = 50,
-                                                                 ['P'] = 51,
-                                                                 ['Q'] = 52,
-                                                                 ['R'] = 53,
-                                                                 ['S'] = 54,
-                                                                 ['T'] = 55,
-                                                                 ['U'] = 56,
-                                                                 ['V'] = 57,
-                                                                 ['W'] = 58,
-                                                                 ['X'] = 59,
-                                                                 ['Y'] = 60,
-                                                                 ['Z'] = 61,
+  [('Z' + 1) ... ('a' - 1)] = ERROR_CODE,
 
-                                                                 [('Z' + 1)...('a' - 1)] = 0xee,
+  ['a'] = 10, ['b'] = 11, ['c'] = 12, ['d'] = 13, ['e'] = 14,
+  ['f'] = 15, ['g'] = 16, ['h'] = 17, ['i'] = 18, ['j'] = 19,
+  ['k'] = 20, ['l'] = 21, ['m'] = 22, ['n'] = 23, ['o'] = 24,
+  ['p'] = 25, ['q'] = 26, ['r'] = 27, ['s'] = 28, ['t'] = 29,
+  ['u'] = 30, ['v'] = 31, ['w'] = 32, ['x'] = 33, ['y'] = 34,
+  ['z'] = 35,
 
-                                                                 ['a'] = 10,
-                                                                 ['b'] = 11,
-                                                                 ['c'] = 12,
-                                                                 ['d'] = 13,
-                                                                 ['e'] = 14,
-                                                                 ['f'] = 15,
-                                                                 ['g'] = 16,
-                                                                 ['h'] = 17,
-                                                                 ['i'] = 18,
-                                                                 ['j'] = 19,
-                                                                 ['k'] = 20,
-                                                                 ['l'] = 21,
-                                                                 ['m'] = 22,
-                                                                 ['n'] = 23,
-                                                                 ['o'] = 24,
-                                                                 ['p'] = 25,
-                                                                 ['q'] = 26,
-                                                                 ['r'] = 27,
-                                                                 ['s'] = 28,
-                                                                 ['t'] = 29,
-                                                                 ['u'] = 30,
-                                                                 ['v'] = 31,
-                                                                 ['w'] = 32,
-                                                                 ['x'] = 33,
-                                                                 ['y'] = 34,
-                                                                 ['z'] = 35,
-
-                                                                 [('z' + 1)... 255] = 0xee};
+  [('z' + 1) ... 255] = ERROR_CODE,
+};
+// clang-format on
 
 // Decode base62 and Golomb-Rice in one pass. Base62 is LSB-first; a Z escape contributes 10 stream
 // bits.
@@ -480,12 +442,12 @@ static inline int decode_chunk(const unsigned char** input, uint64_t* chunk, uns
     *width = 6;
     return 1;
   }
-  if (value == 0xff) return 0;
-  if (value == 0xee) return -1;
+  if (value == EOF_CODE) return 0;
+  if (value == ERROR_CODE) return -1;
 
   unsigned escaped = char_to_num[*(*input)++];
-  if (escaped == 0xff) return -2;
-  if (escaped == 0xee) return -3;
+  if (escaped == EOF_CODE) return -2;
+  if (escaped == ERROR_CODE) return -3;
 
   unsigned high = escaped & 0x30u;
   if (high == 0x30u) return -4;
@@ -589,9 +551,9 @@ static int cache_decode_set(struct set_meta* meta, int target_bpp, const unsigne
 
   const unsigned char* str = (const unsigned char*)meta->str;
   uint32_t fp = (uint32_t)str[0] | ((uint32_t)str[2] << 8) | ((uint32_t)str[3] << 16);
-  uint32_t mixed = fp ^ ((uint32_t)target_bpp * UINT32_C(0x85ebca6b));
+  uint32_t mixed = fp ^ ((uint32_t)target_bpp * CACHE_TARGET_BPP_MULTIPLIER);
   mixed ^= mixed >> 11;
-  mixed *= UINT32_C(0x9e3779b1);
+  mixed *= CACHE_FINGERPRINT_MULTIPLIER;
   mixed ^= mixed >> 16;
   unsigned bucket = mixed & (CACHE_BUCKETS - 1);
 
@@ -660,9 +622,9 @@ static int cache_decode_set(struct set_meta* meta, int target_bpp, const unsigne
     if (victim == newest[cache_id]) newest[cache_id] = NULL;
 
     uint32_t victim_mixed =
-        victim->fingerprint ^ ((uint32_t)victim->target_bpp * UINT32_C(0x85ebca6b));
+        victim->fingerprint ^ ((uint32_t)victim->target_bpp * CACHE_TARGET_BPP_MULTIPLIER);
     victim_mixed ^= victim_mixed >> 11;
-    victim_mixed *= UINT32_C(0x9e3779b1);
+    victim_mixed *= CACHE_FINGERPRINT_MULTIPLIER;
     victim_mixed ^= victim_mixed >> 16;
     unsigned victim_bucket = victim_mixed & (CACHE_BUCKETS - 1);
     struct cache_ent** link = &buckets[cache_id][victim_bucket];
@@ -866,8 +828,8 @@ static void test_hash(void) {
 
 static void test_sort(void) {
   struct symbols small[] = {
-      {.offset = 0, .hash = 9}, {.offset = 1, .hash = 1}, {.offset = 2, .hash = 7},
-      {.offset = 3, .hash = 3}, {.offset = 4, .hash = 5},
+    {.offset = 0, .hash = 9}, {.offset = 1, .hash = 1}, {.offset = 2, .hash = 7},
+    {.offset = 3, .hash = 3}, {.offset = 4, .hash = 5},
   };
   const unsigned small_expected[] = {1, 3, 5, 7, 9};
   const size_t offset_expected[] = {1, 3, 4, 2, 0};
@@ -889,7 +851,8 @@ static void test_sort(void) {
 
     for (size_t i = 0; i < LARGE_COUNT; ++i) {
       values[i].offset = i;
-      values[i].hash = ((unsigned)i * UINT32_C(0x9e3779b1) ^ UINT32_C(0x85ebca6b)) & mask;
+      values[i].hash =
+          ((unsigned)i * CACHE_FINGERPRINT_MULTIPLIER ^ CACHE_TARGET_BPP_MULTIPLIER) & mask;
     }
     memcpy(expected, values, sizeof(values));
     qsort(expected, LARGE_COUNT, sizeof(*expected), cmp);
@@ -906,8 +869,8 @@ static void test_sort(void) {
 
 static void test_encode_decode(void) {
   const unsigned original_values[] = {
-      0x020a, 0x07e5, 0x3305, 0x35f5, 0x4980, 0x4c4f, 0x74ef, 0x7739,
-      0x82ae, 0x8415, 0xa3e7, 0xb07e, 0xb584, 0xb89f, 0xbb40, 0xf39e,
+    0x020a, 0x07e5, 0x3305, 0x35f5, 0x4980, 0x4c4f, 0x74ef, 0x7739,
+    0x82ae, 0x8415, 0xa3e7, 0xb07e, 0xb584, 0xb89f, 0xbb40, 0xf39e,
   };
 
   const int original_count = (int)(sizeof(original_values) / sizeof(*original_values));
@@ -955,9 +918,9 @@ static void test_encode_decode(void) {
 
 static void test_metadata_and_chunks(void) {
   for (int c = 0; c <= 255; ++c) {
-    unsigned char expected = 0xee;
+    unsigned char expected = ERROR_CODE;
     if (c == 0) {
-      expected = 0xff;
+      expected = EOF_CODE;
     } else if (c >= '0' && c <= '9') {
       expected = (unsigned char)(c - '0');
     } else if (c >= 'a' && c <= 'z') {
@@ -976,16 +939,16 @@ static void test_metadata_and_chunks(void) {
   };
 
   const struct chunk_case cases[] = {
-      {.input = "0", .rc = 1, .chunk = 0, .width = 6},
-      {.input = "Y", .rc = 1, .chunk = 60, .width = 6},
-      {.input = "Z0", .rc = 1, .chunk = 61, .width = 10},
-      {.input = "Zg", .rc = 1, .chunk = 62, .width = 10},
-      {.input = "Zw", .rc = 1, .chunk = 63, .width = 10},
-      {.input = "", .rc = 0, .chunk = 0, .width = 0},
-      {.input = "!", .rc = -1, .chunk = 0, .width = 0},
-      {.input = "Z", .rc = -2, .chunk = 0, .width = 0},
-      {.input = "Z!", .rc = -3, .chunk = 0, .width = 0},
-      {.input = "ZM", .rc = -4, .chunk = 0, .width = 0},
+    {.input = "0", .rc = 1, .chunk = 0, .width = 6},
+    {.input = "Y", .rc = 1, .chunk = 60, .width = 6},
+    {.input = "Z0", .rc = 1, .chunk = 61, .width = 10},
+    {.input = "Zg", .rc = 1, .chunk = 62, .width = 10},
+    {.input = "Zw", .rc = 1, .chunk = 63, .width = 10},
+    {.input = "", .rc = 0, .chunk = 0, .width = 0},
+    {.input = "!", .rc = -1, .chunk = 0, .width = 0},
+    {.input = "Z", .rc = -2, .chunk = 0, .width = 0},
+    {.input = "Z!", .rc = -3, .chunk = 0, .width = 0},
+    {.input = "ZM", .rc = -4, .chunk = 0, .width = 0},
   };
 
   for (size_t i = 0; i < sizeof(cases) / sizeof(*cases); ++i) {

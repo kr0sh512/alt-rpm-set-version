@@ -1,3 +1,4 @@
 BasedOnStyle: Google
 IndentWidth: 2
+BracedInitializerIndentWidth: 2
 ColumnLimit: 100
