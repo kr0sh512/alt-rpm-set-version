@@ -2,6 +2,7 @@
 #undef NDEBUG
 #endif
 #include <assert.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,11 +18,36 @@
 #define CACHE_SIZE 512
 #define SET_HASH_SEED UINT32_C(0x9e3779b9)
 
-#define ERROR_CODE 0xee
-#define EOF_CODE 0xff
-
 #define CACHE_FINGERPRINT_MULTIPLIER UINT32_C(0x9e3779b1)
 #define CACHE_TARGET_BPP_MULTIPLIER UINT32_C(0x85ebca6b)
+
+enum {
+  CACHE_BUCKETS = 1024,
+
+  SET_HEADER_SIZE = 2,
+  SET_PARAM_CHAR_OFFSET = 7,
+  SET_BPP_MIN = 10,
+  SET_BPP_MAX = 32,
+  SET_MSHIFT_MIN = 7,
+  SET_MSHIFT_MAX = 31,
+
+  BASE62_ESCAPE_BITS = 4,
+  BASE62_VALUE_BITS = 6,
+  BASE62_ESCAPE_CHUNK_BITS = BASE62_ESCAPE_BITS + BASE62_VALUE_BITS,
+  BASE62_MIN_BITS_PER_CHAR = BASE62_VALUE_BITS - 1,
+  BASE62_MAX_PADDING_BITS = BASE62_VALUE_BITS - 1,
+  BASE62_LOWERCASE_OFFSET = 10,
+  BASE62_UPPERCASE_OFFSET = 36,
+  BASE62_ESCAPE_VALUE = 61,
+  BASE62_VALUE_COUNT = 62,
+  BASE62_ESCAPE_LOW_MASK = (1u << BASE62_ESCAPE_BITS) - 1,
+  BASE62_ESCAPE_HIGH_MASK = 3u << BASE62_ESCAPE_BITS,
+
+  BASE62_INVALID = 0xee,
+  BASE62_END = UCHAR_MAX,
+};
+
+_Static_assert(CHAR_BIT == 8, "set:version requires 8-bit bytes");
 
 struct set {
   size_t cnt;
@@ -165,8 +191,8 @@ static int encode_golomb_Mshift(int cnt, int bpp) {
   int Mshift = bpp - log2i(cnt) - 1;
 
   // Adjust out-of-range values.
-  Mshift = (Mshift < 7) ? 7 : Mshift;
-  Mshift = (Mshift > 31) ? 31 : Mshift;
+  Mshift = (Mshift < SET_MSHIFT_MIN) ? SET_MSHIFT_MIN : Mshift;
+  Mshift = (Mshift > SET_MSHIFT_MAX) ? SET_MSHIFT_MAX : Mshift;
   assert(Mshift < bpp);
 
   return Mshift;
@@ -176,7 +202,7 @@ static int encode_golomb_Mshift(int cnt, int bpp) {
 static inline int encode_golomb_size(int cnt, int Mshift) {
   // XXX No precise estimation.  However, we do not expect unary-encoded bits
   // to take more than binary-encoded Mshift bits.
-  return Mshift * 2 * cnt + 16;
+  return 2 * Mshift * cnt + 16;
 }
 
 // Estimate base62 buffer size required to encode a given number of bits.
@@ -184,14 +210,14 @@ static inline int encode_base62_size(int bit_cnt) {
   // In the worst case, which is ZxZxZx..., five bits can make a character;
   // the remaining bits can make a character, too.  And the string must be
   // null-terminated.
-  return bit_cnt / 5 + 2;
+  return bit_cnt / BASE62_MIN_BITS_PER_CHAR + 2;
 }
 
 static int encode_set_size(int cnt, int bpp) {
   int Mshift = encode_golomb_Mshift(cnt, bpp);
   int bit_cnt = encode_golomb_size(cnt, Mshift);
-  // two leading characters are special
-  return 2 + encode_base62_size(bit_cnt);
+  // The leading characters encode bpp and Mshift.
+  return SET_HEADER_SIZE + encode_base62_size(bit_cnt);
 }
 
 // ---
@@ -212,7 +238,7 @@ static int encode_set_size(int cnt, int bpp) {
 
 // ---
 
-static inline char encode_bpp(int bpp) { return (char)(bpp - 7 + 'a'); }
+static inline char encode_bpp(int bpp) { return (char)(bpp - SET_PARAM_CHAR_OFFSET + 'a'); }
 
 struct encode_writer {
   uint64_t bits;
@@ -223,20 +249,20 @@ struct encode_writer {
 };
 
 static inline void encode_writer_digit(struct encode_writer* writer, unsigned value) {
-  assert(value < 62);
+  assert(value < BASE62_VALUE_COUNT);
 
-  if (value < 10) {
+  if (value < BASE62_LOWERCASE_OFFSET) {
     *writer->output++ = (char)('0' + value);
-  } else if (value < 36) {
-    *writer->output++ = (char)('a' + value - 10);
+  } else if (value < BASE62_UPPERCASE_OFFSET) {
+    *writer->output++ = (char)('a' + value - BASE62_LOWERCASE_OFFSET);
   } else {
-    *writer->output++ = (char)('A' + value - 36);
+    *writer->output++ = (char)('A' + value - BASE62_UPPERCASE_OFFSET);
   }
 }
 
 static inline void encode_writer_flush(struct encode_writer* writer) {
   for (;;) {
-    unsigned width = writer->escaped ? 4u : 6u;
+    unsigned width = writer->escaped ? BASE62_ESCAPE_BITS : BASE62_VALUE_BITS;
     if (writer->filled < width) return;
 
     unsigned value = (unsigned)writer->bits & ((1u << width) - 1);
@@ -246,9 +272,9 @@ static inline void encode_writer_flush(struct encode_writer* writer) {
     if (writer->escaped) {
       encode_writer_digit(writer, writer->pending_high | value);
       writer->escaped = 0;
-    } else if (value >= 61) {
-      encode_writer_digit(writer, 61);
-      writer->pending_high = (value - 61) << 4;
+    } else if (value >= BASE62_ESCAPE_VALUE) {
+      encode_writer_digit(writer, BASE62_ESCAPE_VALUE);
+      writer->pending_high = (value - BASE62_ESCAPE_VALUE) << BASE62_ESCAPE_BITS;
       writer->escaped = 1;
     } else {
       encode_writer_digit(writer, value);
@@ -257,6 +283,8 @@ static inline void encode_writer_flush(struct encode_writer* writer) {
 }
 
 static inline void encode_writer_zeros(struct encode_writer* writer, unsigned count) {
+  // encode_writer_flush() leaves fewer than BASE62_VALUE_BITS bits buffered.
+  // Adding at most 56 bits therefore cannot overflow uint64_t.
   while (count) {
     unsigned take = count > 56 ? 56 : count;
     writer->filled += take;
@@ -313,9 +341,9 @@ const char* set_fini(struct set* set, int bpp) {
 
   assert(set != NULL);
   assert(set->cnt > 0);
-  assert(bpp >= 10 && bpp <= 32);
+  assert(bpp >= SET_BPP_MIN && bpp <= SET_BPP_MAX);
 
-  unsigned mask = (bpp < 32) ? (1u << bpp) - 1 : ~0u;
+  unsigned mask = (bpp < SET_BPP_MAX) ? (1u << bpp) - 1 : ~0u;
 
   for (size_t i = 0; i < set->cnt; ++i) {
     set->symbols_v[i].hash = hash(set->strings + set->symbols_v[i].offset) & mask;
@@ -364,19 +392,19 @@ struct set_meta {
 };
 
 static int set_meta_init(const char* str, struct set_meta* meta) {
-  // len >= 3
-  if (!str[0] || !str[1] || !str[2]) return -4;
+  // The header must be followed by at least one payload character.
+  if (!str[0] || !str[1] || !str[SET_HEADER_SIZE]) return -4;
 
-  int bpp = str[0] + 7 - 'a';
-  if (bpp < 10 || bpp > 32) return -1;
+  int bpp = str[0] + SET_PARAM_CHAR_OFFSET - 'a';
+  if (bpp < SET_BPP_MIN || bpp > SET_BPP_MAX) return -1;
 
-  int Mshift = str[1] + 7 - 'a';
-  if (Mshift < 7 || Mshift > 31) return -2;
+  int Mshift = str[1] + SET_PARAM_CHAR_OFFSET - 'a';
+  if (Mshift < SET_MSHIFT_MIN || Mshift > SET_MSHIFT_MAX) return -2;
   if (Mshift >= bpp) return -3;
 
   *meta = (struct set_meta){
     .str = str,
-    .payload = str + 2,
+    .payload = str + SET_HEADER_SIZE,
     .bpp = bpp,
     .Mshift = Mshift,
   };
@@ -387,9 +415,9 @@ static int set_meta_init(const char* str, struct set_meta* meta) {
 static int set_meta_fini(struct set_meta* meta) {
   size_t len = strlen(meta->str);
 
-  size_t payload_len = len - 2;
+  size_t payload_len = len - SET_HEADER_SIZE;
 
-  int bit_capacity = (int)payload_len * 6;
+  int bit_capacity = (int)payload_len * BASE62_VALUE_BITS;
   int value_capacity = bit_capacity / (meta->Mshift + 1);
 
   if (value_capacity < 1) return -4;
@@ -401,25 +429,24 @@ static int set_meta_fini(struct set_meta* meta) {
 
   return 0;
 }
-// UCHAR_MAX == 255
 // clang-format off
-__extension__ static const unsigned char char_to_num[255 + 1] = {
-  [0] = EOF_CODE,  // конец строки
-  [1 ... ('0' - 1)] = ERROR_CODE,
+__extension__ static const unsigned char char_to_num[UCHAR_MAX + 1] = {
+  [0] = BASE62_END,  // конец строки
+  [1 ... ('0' - 1)] = BASE62_INVALID,
 
   ['0'] = 0, ['1'] = 1, ['2'] = 2, ['3'] = 3, ['4'] = 4,
   ['5'] = 5, ['6'] = 6, ['7'] = 7, ['8'] = 8, ['9'] = 9,
 
-  [('9' + 1) ... ('A' - 1)] = ERROR_CODE,
+  [('9' + 1) ... ('A' - 1)] = BASE62_INVALID,
 
   ['A'] = 36, ['B'] = 37, ['C'] = 38, ['D'] = 39, ['E'] = 40,
   ['F'] = 41, ['G'] = 42, ['H'] = 43, ['I'] = 44, ['J'] = 45,
   ['K'] = 46, ['L'] = 47, ['M'] = 48, ['N'] = 49, ['O'] = 50,
   ['P'] = 51, ['Q'] = 52, ['R'] = 53, ['S'] = 54, ['T'] = 55,
   ['U'] = 56, ['V'] = 57, ['W'] = 58, ['X'] = 59, ['Y'] = 60,
-  ['Z'] = 61,
+  ['Z'] = BASE62_ESCAPE_VALUE,
 
-  [('Z' + 1) ... ('a' - 1)] = ERROR_CODE,
+  [('Z' + 1) ... ('a' - 1)] = BASE62_INVALID,
 
   ['a'] = 10, ['b'] = 11, ['c'] = 12, ['d'] = 13, ['e'] = 14,
   ['f'] = 15, ['g'] = 16, ['h'] = 17, ['i'] = 18, ['j'] = 19,
@@ -428,32 +455,33 @@ __extension__ static const unsigned char char_to_num[255 + 1] = {
   ['u'] = 30, ['v'] = 31, ['w'] = 32, ['x'] = 33, ['y'] = 34,
   ['z'] = 35,
 
-  [('z' + 1) ... 255] = ERROR_CODE,
+  [('z' + 1) ... UCHAR_MAX] = BASE62_INVALID,
 };
 // clang-format on
 
-// Decode base62 and Golomb-Rice in one pass. Base62 is LSB-first; a Z escape contributes 10 stream
-// bits.
+// Decode base62 and Golomb-Rice in one pass. Base62 is LSB-first; a Z escape contributes
+// BASE62_ESCAPE_CHUNK_BITS stream bits.
 static inline int decode_chunk(const unsigned char** input, uint64_t* chunk, unsigned* width) {
   unsigned value = char_to_num[*(*input)++];
 
-  if (value < 61) {
+  if (value < BASE62_ESCAPE_VALUE) {
     *chunk = value;
-    *width = 6;
+    *width = BASE62_VALUE_BITS;
     return 1;
   }
-  if (value == EOF_CODE) return 0;
-  if (value == ERROR_CODE) return -1;
+  if (value == BASE62_END) return 0;
+  if (value == BASE62_INVALID) return -1;
 
   unsigned escaped = char_to_num[*(*input)++];
-  if (escaped == EOF_CODE) return -2;
-  if (escaped == ERROR_CODE) return -3;
+  if (escaped == BASE62_END) return -2;
+  if (escaped == BASE62_INVALID) return -3;
 
-  unsigned high = escaped & 0x30u;
-  if (high == 0x30u) return -4;
+  unsigned high = escaped & BASE62_ESCAPE_HIGH_MASK;
+  if (high == BASE62_ESCAPE_HIGH_MASK) return -4;
 
-  *chunk = (61u + (high >> 4)) | ((uint64_t)(escaped & 0x0fu) << 6);
-  *width = 10;
+  *chunk = (BASE62_ESCAPE_VALUE + (high >> BASE62_ESCAPE_BITS)) |
+           ((uint64_t)(escaped & BASE62_ESCAPE_LOW_MASK) << BASE62_VALUE_BITS);
+  *width = BASE62_ESCAPE_CHUNK_BITS;
 
   return 1;
 }
@@ -477,7 +505,7 @@ static int decode_set(const struct set_meta* meta, unsigned* hash_arr) {
         int rc = decode_chunk(&input, &chunk, &width);
 
         if (rc < 0) return rc;
-        if (rc == 0) return q <= 5 ? count : -10;
+        if (rc == 0) return q <= BASE62_MAX_PADDING_BITS ? count : -10;
 
         bits = chunk;
         filled = width;
@@ -527,9 +555,17 @@ static int decode_set(const struct set_meta* meta, unsigned* hash_arr) {
 // Bounded decoded-set cache: bucketed lookup plus O(1) LRU updates.
 static int downsample_set(int cnt, const unsigned* hash_pt, unsigned* ds_pt, int bpp);
 
+static inline unsigned cache_bucket(uint32_t fingerprint, int target_bpp) {
+  uint32_t mixed = fingerprint ^ ((uint32_t)target_bpp * CACHE_TARGET_BPP_MULTIPLIER);
+  mixed ^= mixed >> 11;
+  mixed *= CACHE_FINGERPRINT_MULTIPLIER;
+  mixed ^= mixed >> 16;
+
+  return mixed & (CACHE_BUCKETS - 1);
+}
+
 static int cache_decode_set(struct set_meta* meta, int target_bpp, const unsigned** hash_pt,
                             unsigned cache_id) {
-  enum { CACHE_BUCKETS = 1024 };
   struct cache_ent {
     struct cache_ent* bucket_next;
     struct cache_ent* newer;
@@ -551,11 +587,7 @@ static int cache_decode_set(struct set_meta* meta, int target_bpp, const unsigne
 
   const unsigned char* str = (const unsigned char*)meta->str;
   uint32_t fp = (uint32_t)str[0] | ((uint32_t)str[2] << 8) | ((uint32_t)str[3] << 16);
-  uint32_t mixed = fp ^ ((uint32_t)target_bpp * CACHE_TARGET_BPP_MULTIPLIER);
-  mixed ^= mixed >> 11;
-  mixed *= CACHE_FINGERPRINT_MULTIPLIER;
-  mixed ^= mixed >> 16;
-  unsigned bucket = mixed & (CACHE_BUCKETS - 1);
+  unsigned bucket = cache_bucket(fp, target_bpp);
 
   for (struct cache_ent* ent = buckets[cache_id][bucket]; ent; ent = ent->bucket_next) {
     if (ent->fingerprint != fp || ent->target_bpp != target_bpp || strcmp(meta->str, ent->str) != 0)
@@ -621,12 +653,7 @@ static int cache_decode_set(struct set_meta* meta, int target_bpp, const unsigne
     if (oldest[cache_id]) oldest[cache_id]->older = NULL;
     if (victim == newest[cache_id]) newest[cache_id] = NULL;
 
-    uint32_t victim_mixed =
-        victim->fingerprint ^ ((uint32_t)victim->target_bpp * CACHE_TARGET_BPP_MULTIPLIER);
-    victim_mixed ^= victim_mixed >> 11;
-    victim_mixed *= CACHE_FINGERPRINT_MULTIPLIER;
-    victim_mixed ^= victim_mixed >> 16;
-    unsigned victim_bucket = victim_mixed & (CACHE_BUCKETS - 1);
+    unsigned victim_bucket = cache_bucket(victim->fingerprint, victim->target_bpp);
     struct cache_ent** link = &buckets[cache_id][victim_bucket];
     while (*link != victim) link = &(*link)->bucket_next;
     *link = victim->bucket_next;
@@ -851,8 +878,7 @@ static void test_sort(void) {
 
     for (size_t i = 0; i < LARGE_COUNT; ++i) {
       values[i].offset = i;
-      values[i].hash =
-          ((unsigned)i * CACHE_FINGERPRINT_MULTIPLIER ^ CACHE_TARGET_BPP_MULTIPLIER) & mask;
+      values[i].hash = ((unsigned)i * UINT32_C(0x9e3779b1) ^ UINT32_C(0x85ebca6b)) & mask;
     }
     memcpy(expected, values, sizeof(values));
     qsort(expected, LARGE_COUNT, sizeof(*expected), cmp);
@@ -917,10 +943,10 @@ static void test_encode_decode(void) {
 }
 
 static void test_metadata_and_chunks(void) {
-  for (int c = 0; c <= 255; ++c) {
-    unsigned char expected = ERROR_CODE;
+  for (int c = 0; c <= UCHAR_MAX; ++c) {
+    unsigned char expected = BASE62_INVALID;
     if (c == 0) {
-      expected = EOF_CODE;
+      expected = BASE62_END;
     } else if (c >= '0' && c <= '9') {
       expected = (unsigned char)(c - '0');
     } else if (c >= 'a' && c <= 'z') {
