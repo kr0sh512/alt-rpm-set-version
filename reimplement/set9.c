@@ -15,11 +15,7 @@
 #include "set.h"
 #include "system.h"
 
-// #define CACHE_SIZE 512
-#define SET_HASH_SEED UINT32_C(0x9e3779b9)
-
 enum {
-  // SET_HASH_SEED = UINT32_C(0x9e3779b9),
   CACHE_SIZE = 512,
   CACHE_BUCKETS = 1024,
 };
@@ -114,7 +110,7 @@ struct set* set_free(struct set* set) {
 // ---
 
 static unsigned hash(const char* str) {
-  unsigned hash = SET_HASH_SEED;
+  unsigned hash = UINT32_C(0x9e3779b9);
   const unsigned char* p = (const unsigned char*)str;
 
   while (*p) {
@@ -550,7 +546,7 @@ static int decode_set(const struct set_meta* meta, unsigned* hash_arr) {
 }
 
 // Bounded decoded-set cache: bucketed lookup plus O(1) LRU updates.
-static int downsample_set(int cnt, const unsigned* hash_pt, unsigned* ds_pt, int bpp);
+static int downsample_set(int hash_cnt, const unsigned* hash_pt, unsigned* ds_pt, int target_bpp);
 
 static inline unsigned cache_bucket(uint32_t fingerprint, int target_bpp) {
   uint32_t mixed = fingerprint ^ ((uint32_t)target_bpp * UINT32_C(0x85ebca6b));
@@ -676,12 +672,12 @@ static int cache_decode_set(struct set_meta* meta, int target_bpp, const unsigne
 }
 
 // Reduce a set of (bpp + 1) values to a set of bpp values.
-static int downsample_set(int cnt, const unsigned* hash_pt, unsigned* ds_pt, int bpp) {
-  unsigned mask = (1u << bpp) - 1;
+static int downsample_set(int hash_cnt, const unsigned* hash_pt, unsigned* ds_pt, int target_bpp) {
+  unsigned mask = (1u << target_bpp) - 1;
 
   // find the first element with high bit set
   int l = 0;
-  int u = cnt;
+  int u = hash_cnt;
   while (l < u) {
     int i = (l + u) / 2;
 
@@ -695,7 +691,7 @@ static int downsample_set(int cnt, const unsigned* hash_pt, unsigned* ds_pt, int
   // initialize parts
   const unsigned* ds_start = ds_pt;
   const unsigned *v1 = hash_pt + 0, *v1_end = hash_pt + u;
-  const unsigned *v2 = hash_pt + u, *v2_end = hash_pt + cnt;
+  const unsigned *v2 = hash_pt + u, *v2_end = hash_pt + hash_cnt;
 
   // merge v1 and v2 into w
   if (v1 < v1_end && v2 < v2_end) {
