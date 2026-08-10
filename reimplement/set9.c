@@ -2,6 +2,7 @@
 #undef NDEBUG
 #endif
 #include <assert.h>
+#include <errno.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -386,14 +387,14 @@ struct set_meta {
 
 static int set_meta_init(const char* str, struct set_meta* meta) {
   // The header must be followed by at least one payload character.
-  if (!str[0] || !str[1] || !str[SET_HEADER_SIZE]) return -4;
+  if (!str[0] || !str[1] || !str[SET_HEADER_SIZE]) return -EINVAL;
 
   int bpp = str[0] + SET_PARAM_CHAR_OFFSET - 'a';
-  if (bpp < SET_BPP_MIN || bpp > SET_BPP_MAX) return -1;
+  if (bpp < SET_BPP_MIN || bpp > SET_BPP_MAX) return -ERANGE;
 
   int Mshift = str[1] + SET_PARAM_CHAR_OFFSET - 'a';
-  if (Mshift < SET_MSHIFT_MIN || Mshift > SET_MSHIFT_MAX) return -2;
-  if (Mshift >= bpp) return -3;
+  if (Mshift < SET_MSHIFT_MIN || Mshift > SET_MSHIFT_MAX) return -ERANGE;
+  if (Mshift >= bpp) return -EINVAL;
 
   *meta = (struct set_meta){
     .str = str,
@@ -413,7 +414,7 @@ static int set_meta_fini(struct set_meta* meta) {
   int bit_capacity = (int)payload_len * BASE62_VALUE_BITS;
   int value_capacity = bit_capacity / (meta->Mshift + 1);
 
-  if (value_capacity < 1) return -4;
+  if (value_capacity < 1) return -EINVAL;
 
   meta->len = len;
   meta->payload_len = payload_len;
@@ -463,14 +464,14 @@ static inline int decode_chunk(const unsigned char** input, uint64_t* chunk, uns
     return 1;
   }
   if (value == BASE62_END) return 0;
-  if (value == BASE62_INVALID) return -1;
+  if (value == BASE62_INVALID) return -EINVAL;
 
   unsigned escaped = char_to_num[*(*input)++];
-  if (escaped == BASE62_END) return -2;
-  if (escaped == BASE62_INVALID) return -3;
+  if (escaped == BASE62_END) return -EINVAL;
+  if (escaped == BASE62_INVALID) return -EINVAL;
 
   unsigned high = escaped & BASE62_ESCAPE_HIGH_MASK;
-  if (high == BASE62_ESCAPE_HIGH_MASK) return -4;
+  if (high == BASE62_ESCAPE_HIGH_MASK) return -EINVAL;
 
   *chunk = (BASE62_ESCAPE_VALUE + (high >> BASE62_ESCAPE_BITS)) |
            ((uint64_t)(escaped & BASE62_ESCAPE_LOW_MASK) << BASE62_VALUE_BITS);
@@ -498,7 +499,7 @@ static int decode_set(const struct set_meta* meta, unsigned* hash_arr) {
         int rc = decode_chunk(&input, &chunk, &width);
 
         if (rc < 0) return rc;
-        if (rc == 0) return q <= BASE62_MAX_PADDING_BITS ? count : -10;
+        if (rc == 0) return q <= BASE62_MAX_PADDING_BITS ? count : -EINVAL;
 
         bits = chunk;
         filled = width;
@@ -530,7 +531,7 @@ static int decode_set(const struct set_meta* meta, unsigned* hash_arr) {
       unsigned width;
       int rc = decode_chunk(&input, &chunk, &width);
       if (rc < 0) return rc;
-      if (rc == 0) return -11;
+      if (rc == 0) return -EINVAL;
       bits |= chunk << filled;
       filled += width;
     }
@@ -602,7 +603,8 @@ static int cache_decode_set(struct set_meta* meta, int target_bpp, const unsigne
     return ent->cnt;
   }
 
-  if (set_meta_fini(meta) < 0) return -4;
+  int meta_status = set_meta_fini(meta);
+  if (meta_status < 0) return meta_status;
 
   int len = (int)meta->len;
   int capacity = meta->value_capacity;
@@ -964,10 +966,10 @@ static void test_metadata_and_chunks(void) {
     {.input = "Zg", .rc = 1, .chunk = 62, .width = 10},
     {.input = "Zw", .rc = 1, .chunk = 63, .width = 10},
     {.input = "", .rc = 0, .chunk = 0, .width = 0},
-    {.input = "!", .rc = -1, .chunk = 0, .width = 0},
-    {.input = "Z", .rc = -2, .chunk = 0, .width = 0},
-    {.input = "Z!", .rc = -3, .chunk = 0, .width = 0},
-    {.input = "ZM", .rc = -4, .chunk = 0, .width = 0},
+    {.input = "!", .rc = -EINVAL, .chunk = 0, .width = 0},
+    {.input = "Z", .rc = -EINVAL, .chunk = 0, .width = 0},
+    {.input = "Z!", .rc = -EINVAL, .chunk = 0, .width = 0},
+    {.input = "ZM", .rc = -EINVAL, .chunk = 0, .width = 0},
   };
 
   for (size_t i = 0; i < sizeof(cases) / sizeof(*cases); ++i) {
@@ -984,15 +986,15 @@ static void test_metadata_and_chunks(void) {
   }
 
   struct set_meta meta;
-  assert(set_meta_init("", &meta) == -4);  // too short
-  assert(set_meta_init("da", &meta) == -4);
-  assert(set_meta_init("ca0", &meta) == -1);  // incorrect bpp
-  assert(set_meta_init("{a0", &meta) == -1);
-  assert(set_meta_init("d`0", &meta) == -2);  // incorrect Mshift
-  assert(set_meta_init("dz0", &meta) == -2);
-  assert(set_meta_init("dd0", &meta) == -3);  // Mshift == bpp
+  assert(set_meta_init("", &meta) == -EINVAL);  // too short
+  assert(set_meta_init("da", &meta) == -EINVAL);
+  assert(set_meta_init("ca0", &meta) == -ERANGE);  // incorrect bpp
+  assert(set_meta_init("{a0", &meta) == -ERANGE);
+  assert(set_meta_init("d`0", &meta) == -ERANGE);  // incorrect Mshift
+  assert(set_meta_init("dz0", &meta) == -ERANGE);
+  assert(set_meta_init("dd0", &meta) == -EINVAL);  // Mshift == bpp
   assert(set_meta_init("da0", &meta) == 0);
-  assert(set_meta_fini(&meta) == -4);  // not enough data
+  assert(set_meta_fini(&meta) == -EINVAL);  // not enough data
   assert(set_meta_init("da00", &meta) == 0);
   assert(set_meta_fini(&meta) == 0);  // ok
   assert(meta.len == 4);
