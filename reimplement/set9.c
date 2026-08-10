@@ -15,26 +15,29 @@
 #include "set.h"
 #include "system.h"
 
-#define CACHE_SIZE 512
+// #define CACHE_SIZE 512
 #define SET_HASH_SEED UINT32_C(0x9e3779b9)
 
-#define CACHE_FINGERPRINT_MULTIPLIER UINT32_C(0x9e3779b1)
-#define CACHE_TARGET_BPP_MULTIPLIER UINT32_C(0x85ebca6b)
+enum {
+  // SET_HASH_SEED = UINT32_C(0x9e3779b9),
+  CACHE_SIZE = 512,
+  CACHE_BUCKETS = 1024,
+};
 
 enum {
-  CACHE_BUCKETS = 1024,
-
   SET_HEADER_SIZE = 2,
   SET_PARAM_CHAR_OFFSET = 7,
   SET_BPP_MIN = 10,
   SET_BPP_MAX = 32,
   SET_MSHIFT_MIN = 7,
   SET_MSHIFT_MAX = 31,
+};
 
+enum {
   BASE62_ESCAPE_BITS = 4,
   BASE62_VALUE_BITS = 6,
   BASE62_ESCAPE_CHUNK_BITS = BASE62_ESCAPE_BITS + BASE62_VALUE_BITS,
-  BASE62_MIN_BITS_PER_CHAR = BASE62_VALUE_BITS - 1,
+  BASE62_MIN_BITS_PER_CHAR = BASE62_ESCAPE_CHUNK_BITS / 2,
   BASE62_MAX_PADDING_BITS = BASE62_VALUE_BITS - 1,
   BASE62_LOWERCASE_OFFSET = 10,
   BASE62_UPPERCASE_OFFSET = 36,
@@ -42,12 +45,14 @@ enum {
   BASE62_VALUE_COUNT = 62,
   BASE62_ESCAPE_LOW_MASK = (1u << BASE62_ESCAPE_BITS) - 1,
   BASE62_ESCAPE_HIGH_MASK = 3u << BASE62_ESCAPE_BITS,
+};
 
+enum {
   BASE62_INVALID = 0xee,
   BASE62_END = UCHAR_MAX,
 };
 
-_Static_assert(CHAR_BIT == 8, "set:version requires 8-bit bytes");
+_Static_assert(CHAR_BIT == 8, "set:version relies on 8-bit");
 
 struct set {
   size_t cnt;
@@ -82,7 +87,7 @@ void set_add(struct set* set, const char* sym) {
   size_t length = strlen(sym) + 1;
   size_t required = set->strings_len + length;
   if (required > set->strings_cap) {
-    size_t capacity = set->strings_cap ? set->strings_cap : 4096;
+    size_t capacity = set->strings_cap ?: 4096;
     while (capacity < required) capacity *= 2;
 
     set->strings = xrealloc(set->strings, capacity);
@@ -94,8 +99,6 @@ void set_add(struct set* set, const char* sym) {
   memcpy(set->strings + set->strings_len, sym, length);
   set->strings_len = required;
   set->cnt++;
-
-  return;
 }
 
 struct set* set_free(struct set* set) {
@@ -171,8 +174,6 @@ static void sort_symbols(struct symbols* values, size_t count, int bpp) {
   }
 
   if (source != values) memcpy(values, source, count * sizeof(*values));
-
-  return;
 }
 
 // ---
@@ -292,16 +293,12 @@ static inline void encode_writer_zeros(struct encode_writer* writer, unsigned co
 
     encode_writer_flush(writer);
   }
-
-  return;
 }
 
 static inline void encode_writer_put(struct encode_writer* writer, uint64_t value, unsigned width) {
   writer->bits |= value << writer->filled;
   writer->filled += width;
   encode_writer_flush(writer);
-
-  return;
 }
 
 static int encode_set(int cnt, const unsigned* hash_arr, int bpp, char* base62_str) {
@@ -358,7 +355,7 @@ const char* set_fini(struct set* set, int bpp) {
     const char* right = set->strings + set->symbols_v[i + 1].offset;
     if (!strcmp(left, right)) continue;
 
-    fprintf(stderr, "warning: hash collision: %s %s\n", left, right);
+    fprintf(stderr, "warning: set-version hash collision: %s %s\n", left, right);
   }
 
   unsigned unique_hash[set->cnt];
@@ -556,9 +553,9 @@ static int decode_set(const struct set_meta* meta, unsigned* hash_arr) {
 static int downsample_set(int cnt, const unsigned* hash_pt, unsigned* ds_pt, int bpp);
 
 static inline unsigned cache_bucket(uint32_t fingerprint, int target_bpp) {
-  uint32_t mixed = fingerprint ^ ((uint32_t)target_bpp * CACHE_TARGET_BPP_MULTIPLIER);
+  uint32_t mixed = fingerprint ^ ((uint32_t)target_bpp * UINT32_C(0x85ebca6b));
   mixed ^= mixed >> 11;
-  mixed *= CACHE_FINGERPRINT_MULTIPLIER;
+  mixed *= UINT32_C(0x9e3779b1);
   mixed ^= mixed >> 16;
 
   return mixed & (CACHE_BUCKETS - 1);
