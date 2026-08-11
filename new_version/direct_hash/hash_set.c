@@ -15,7 +15,7 @@
  * This is intentionally a new set-string format. It is not compatible with
  * the Golomb-Rice/base62 strings produced by the original lib/set.c.
  *
- *   D1<two decimal bpp digits><RFC 4648 base64 of packed hashes>
+ *   D1<two decimal bpp digits><unpadded RFC 4648 base64 of packed hashes>
  *
  * Sorted unique hashes are packed least-significant bit first, using exactly
  * bpp bits per hash. Base64 is only a textual representation of those bytes;
@@ -209,7 +209,10 @@ static size_t base64_encoded_size(size_t byte_count) {
   size_t groups = (byte_count + 2) / 3;
   if (groups > (SIZE_MAX - FORMAT_HEADER_LEN - 1) / 4) abort();
 
-  return groups * 4;
+  size_t size = groups * 4;
+  size_t remainder = byte_count % 3;
+  if (remainder != 0) size -= 3 - remainder;
+  return size;
 }
 
 static void base64_encode(const unsigned char* input, size_t input_len, char* output) {
@@ -228,14 +231,11 @@ static void base64_encode(const unsigned char* input, size_t input_len, char* ou
     uint32_t value = (uint32_t)input[0] << 16;
     output[0] = base64_alphabet[(value >> 18) & 0x3f];
     output[1] = base64_alphabet[(value >> 12) & 0x3f];
-    output[2] = '=';
-    output[3] = '=';
   } else if (input_len == 2) {
     uint32_t value = ((uint32_t)input[0] << 16) | ((uint32_t)input[1] << 8);
     output[0] = base64_alphabet[(value >> 18) & 0x3f];
     output[1] = base64_alphabet[(value >> 12) & 0x3f];
     output[2] = base64_alphabet[(value >> 6) & 0x3f];
-    output[3] = '=';
   }
 
   return;
@@ -334,6 +334,20 @@ static const unsigned char base64_values[256] = {
 
 static inline int base64_value(unsigned char c) { return (int)base64_values[c] - 1; }
 
+static int base64_decoded_size(size_t input_len, size_t* byte_count) {
+  size_t remainder = input_len % 4;
+  if (input_len == 0 || remainder == 1) return -1;
+
+  size_t groups = input_len / 4;
+  if (groups > SIZE_MAX / 3) return -1;
+  size_t size = groups * 3;
+  size_t tail_size = remainder == 0 ? 0 : remainder - 1;
+  if (size > SIZE_MAX - tail_size) return -1;
+
+  *byte_count = size + tail_size;
+  return 0;
+}
+
 static inline int has_set_prefix(const char* str) {
   return str[0] == 's' && str[1] == 'e' && str[2] == 't' && str[3] == ':';
 }
@@ -343,11 +357,11 @@ static int set_meta_init(const char* source, struct set_meta* meta) {
   if (has_set_prefix(str)) str += 4;
   if (has_set_prefix(str)) return -1;
 
-  /* A valid direct set has at least one complete Base64 quartet.  Checking
-   * this fixed prefix makes cache hits independent of total key length. */
+  /* With bpp >= 10, a valid direct set has at least three Base64 characters.
+   * Checking this fixed prefix makes cache hits independent of total key length. */
   if (str[0] != FORMAT_PREFIX[0] || str[1] != FORMAT_PREFIX[1]) return -1;
   if (str[2] < '0' || str[2] > '9' || str[3] < '0' || str[3] > '9') return -1;
-  if (str[4] == '\0' || str[5] == '\0' || str[6] == '\0' || str[7] == '\0') return -1;
+  if (str[4] == '\0' || str[5] == '\0' || str[6] == '\0') return -1;
 
   unsigned bpp = (unsigned)(str[2] - '0') * 10 + (unsigned)(str[3] - '0');
   if (bpp < 10 || bpp > 32) return -1;
@@ -396,36 +410,34 @@ static int decode_base64_bytes(const char* input, size_t input_len, unsigned cha
                                size_t output_len) {
   unsigned char* const output_end = output + output_len;
   size_t offset = 0;
-  for (; offset + 4 < input_len; offset += 4) {
+  while (input_len - offset >= 4) {
     int v0 = base64_value((unsigned char)input[offset]);
     int v1 = base64_value((unsigned char)input[offset + 1]);
     int v2 = base64_value((unsigned char)input[offset + 2]);
     int v3 = base64_value((unsigned char)input[offset + 3]);
-    if ((v0 | v1 | v2 | v3) < 0) return -1;
+    if ((v0 | v1 | v2 | v3) < 0 || output_end - output < 3) return -1;
     output[0] = (unsigned char)((v0 << 2) | (v1 >> 4));
     output[1] = (unsigned char)(((v1 & 0x0f) << 4) | (v2 >> 2));
     output[2] = (unsigned char)(((v2 & 0x03) << 6) | v3);
     output += 3;
+    offset += 4;
   }
+
+  size_t remainder = input_len - offset;
+  if (remainder == 0) return output == output_end ? 0 : -1;
+  if (remainder == 1) return -1;
 
   int v0 = base64_value((unsigned char)input[offset]);
   int v1 = base64_value((unsigned char)input[offset + 1]);
   if ((v0 | v1) < 0 || output == output_end) return -1;
   *output++ = (unsigned char)((v0 << 2) | (v1 >> 4));
 
-  if (input[offset + 2] == '=') {
-    return input[offset + 3] == '=' && (v1 & 0x0f) == 0 && output == output_end ? 0 : -1;
-  }
+  if (remainder == 2) return (v1 & 0x0f) == 0 && output == output_end ? 0 : -1;
 
   int v2 = base64_value((unsigned char)input[offset + 2]);
   if (v2 < 0 || output == output_end) return -1;
   *output++ = (unsigned char)(((v1 & 0x0f) << 4) | (v2 >> 2));
-  if (input[offset + 3] == '=') return (v2 & 0x03) == 0 && output == output_end ? 0 : -1;
-
-  int v3 = base64_value((unsigned char)input[offset + 3]);
-  if (v3 < 0 || output == output_end) return -1;
-  *output++ = (unsigned char)(((v2 & 0x03) << 6) | v3);
-  return output == output_end ? 0 : -1;
+  return (v2 & 0x03) == 0 && output == output_end ? 0 : -1;
 }
 
 static inline int decode_base64_triplet(const char* input, uint32_t* triplet) {
@@ -502,11 +514,8 @@ static int decode_set_sized(const char* str, size_t str_len, struct decoded_set*
 
   const char* input = str + FORMAT_HEADER_LEN;
   size_t input_len = str_len - FORMAT_HEADER_LEN;
-  if (input_len == 0 || input_len % 4 != 0 || input_len / 4 > SIZE_MAX / 3) return -1;
-
-  size_t byte_count = input_len / 4 * 3;
-  if (input[input_len - 1] == '=') --byte_count;
-  if (input[input_len - 2] == '=') --byte_count;
+  size_t byte_count;
+  if (base64_decoded_size(input_len, &byte_count) < 0) return -1;
   if (byte_count > SIZE_MAX / 8) return -1;
 
   size_t count = byte_count * 8 / bpp;
@@ -563,32 +572,35 @@ static int decode_set_sized(const char* str, size_t str_len, struct decoded_set*
       .bpp = bpp,
   };
 
-  for (size_t offset = 0; offset < input_len; offset += 4) {
+  size_t full_len = input_len - input_len % 4;
+  for (size_t offset = 0; offset < full_len; offset += 4) {
     int v0 = base64_value((unsigned char)input[offset]);
     int v1 = base64_value((unsigned char)input[offset + 1]);
-    int last = offset + 4 == input_len;
-    if (v0 < 0 || v1 < 0) goto invalid;
+    int v2 = base64_value((unsigned char)input[offset + 2]);
+    int v3 = base64_value((unsigned char)input[offset + 3]);
+    if ((v0 | v1 | v2 | v3) < 0) goto invalid;
+
+    uint32_t bytes = (uint32_t)((v0 << 2) | (v1 >> 4)) |
+                     (uint32_t)(((v1 & 0x0f) << 4) | (v2 >> 2)) << 8 |
+                     (uint32_t)(((v2 & 0x03) << 6) | v3) << 16;
+    if (decode_writer_put(&writer, bytes, 3) < 0) goto invalid;
+  }
+
+  size_t remainder = input_len - full_len;
+  if (remainder != 0) {
+    int v0 = base64_value((unsigned char)input[full_len]);
+    int v1 = base64_value((unsigned char)input[full_len + 1]);
+    if ((v0 | v1) < 0) goto invalid;
 
     uint32_t bytes = (uint32_t)((v0 << 2) | (v1 >> 4));
-    if (input[offset + 2] == '=') {
-      if (!last || input[offset + 3] != '=' || (v1 & 0x0f) != 0 ||
-          decode_writer_put(&writer, bytes, 1) < 0)
-        goto invalid;
-      continue;
+    if (remainder == 2) {
+      if ((v1 & 0x0f) != 0 || decode_writer_put(&writer, bytes, 1) < 0) goto invalid;
+    } else {
+      int v2 = base64_value((unsigned char)input[full_len + 2]);
+      if (v2 < 0 || (v2 & 0x03) != 0) goto invalid;
+      bytes |= (uint32_t)(((v1 & 0x0f) << 4) | (v2 >> 2)) << 8;
+      if (decode_writer_put(&writer, bytes, 2) < 0) goto invalid;
     }
-
-    int v2 = base64_value((unsigned char)input[offset + 2]);
-    if (v2 < 0) goto invalid;
-    bytes |= (uint32_t)(((v1 & 0x0f) << 4) | (v2 >> 2)) << 8;
-    if (input[offset + 3] == '=') {
-      if (!last || (v2 & 0x03) != 0 || decode_writer_put(&writer, bytes, 2) < 0) goto invalid;
-      continue;
-    }
-
-    int v3 = base64_value((unsigned char)input[offset + 3]);
-    if (v3 < 0) goto invalid;
-    bytes |= (uint32_t)(((v2 & 0x03) << 6) | v3) << 16;
-    if (decode_writer_put(&writer, bytes, 3) < 0) goto invalid;
   }
 
   if (writer.written != count || writer.bits != 0) goto invalid;
@@ -803,8 +815,6 @@ static int cache_decode_set(const struct set_meta* meta, unsigned target_bpp, un
   }
 
   size_t len = strlen(meta->str);
-  size_t input_len = len - FORMAT_HEADER_LEN;
-  if (input_len == 0 || input_len % 4 != 0 || input_len / 4 > SIZE_MAX / 3) return -1;
 
   struct decoded_set decoded;
   if (decode_set_sized(meta->str, len, &decoded) < 0) return -1;
