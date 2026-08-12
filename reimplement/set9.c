@@ -178,7 +178,7 @@ static int log2i(int n) {
   return m;
 }
 
-/* Calculate Mshift paramter for encoding. */
+/* Calculate Mshift parameter for encoding. */
 static int encode_golomb_Mshift(int cnt, int bpp) {
   /*
    * XXX Slightly better Mshift estimations are probably possible.
@@ -345,7 +345,7 @@ const char* set_fini(struct set* set, int bpp) {
 
   sort_symbols(set->symbols_v, set->cnt, bpp);
 
-  /* warn on hash collizions */
+  /* warn on hash collisions */
   for (size_t i = 0; i < set->cnt - 1; ++i) {
     if (set->symbols_v[i].hash != set->symbols_v[i + 1].hash) continue;
     const char* left = set->strings + set->symbols_v[i].offset;
