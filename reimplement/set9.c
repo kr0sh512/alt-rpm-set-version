@@ -108,8 +108,6 @@ struct set* set_free(struct set* set) {
   return NULL;
 }
 
-// ---
-
 static unsigned hash(const char* str) {
   unsigned hash = UINT32_C(0x9e3779b9);
   const unsigned char* p = (const unsigned char*)str;
@@ -173,8 +171,6 @@ static void sort_symbols(struct symbols* values, size_t count, int bpp) {
   if (source != values) memcpy(values, source, count * sizeof(*values));
 }
 
-// ---
-
 static int log2i(int n) {
   int m = 0;
   while (n /= 2) m++;
@@ -182,13 +178,15 @@ static int log2i(int n) {
   return m;
 }
 
-// Calculate Mshift paramter for encoding.
+/* Calculate Mshift paramter for encoding. */
 static int encode_golomb_Mshift(int cnt, int bpp) {
-  // XXX Slightly better Mshift estimations are probably possible.
-  // Recheck "Compression and coding algorithms" by Moffat & Turpin.
+  /*
+   * XXX Slightly better Mshift estimations are probably possible.
+   * Recheck "Compression and coding algorithms" by Moffat & Turpin.
+   */
   int Mshift = bpp - log2i(cnt) - 1;
 
-  // Adjust out-of-range values.
+  /* Adjust out-of-range values. */
   Mshift = (Mshift < SET_MSHIFT_MIN) ? SET_MSHIFT_MIN : Mshift;
   Mshift = (Mshift > SET_MSHIFT_MAX) ? SET_MSHIFT_MAX : Mshift;
   assert(Mshift < bpp);
@@ -196,31 +194,33 @@ static int encode_golomb_Mshift(int cnt, int bpp) {
   return Mshift;
 }
 
-// Estimate how many bits can be filled up.
+/* Estimate how many bits can be filled up. */
 static inline int encode_golomb_size(int cnt, int Mshift) {
-  // XXX No precise estimation.  However, we do not expect unary-encoded bits
-  // to take more than binary-encoded Mshift bits.
+  /*
+   * XXX No precise estimation.  However, we do not expect unary-encoded bits
+   * to take more than binary-encoded Mshift bits.
+   */
   return 2 * Mshift * cnt + 16;
 }
 
-// Estimate base62 buffer size required to encode a given number of bits.
+/* Estimate base62 buffer size required to encode a given number of bits. */
 static inline int encode_base62_size(int bit_cnt) {
-  // In the worst case, which is ZxZxZx..., five bits can make a character;
-  // the remaining bits can make a character, too.  And the string must be
-  // null-terminated.
+  /*
+   * In the worst case, which is ZxZxZx..., five bits can make a character;
+   * the remaining bits can make a character, too.  And the string must be
+   * null-terminated.
+   */
   return bit_cnt / BASE62_MIN_BITS_PER_CHAR + 2;
 }
 
 static int encode_set_size(int cnt, int bpp) {
   int Mshift = encode_golomb_Mshift(cnt, bpp);
   int bit_cnt = encode_golomb_size(cnt, Mshift);
-  // The leading characters encode bpp and Mshift.
+  /* The leading characters encode bpp and Mshift. */
   return SET_HEADER_SIZE + encode_base62_size(bit_cnt);
 }
 
-// ---
-
-// Main base62 encoding routine: pack bit_arr into base62 string.
+/* Main base62 encoding routine: pack bit_arr into base62 string. */
 /*
  * Base62 routines - encode bits with alnum characters.
  *
@@ -233,8 +233,6 @@ static int encode_set_size(int cnt, int bpp) {
  * to another 'Z' (which would require high bits set to "11").  This is
  * how multiple escapes are avoided.
  */
-
-// ---
 
 static inline char encode_bpp(int bpp) { return (char)(bpp - SET_PARAM_CHAR_OFFSET + 'a'); }
 
@@ -281,8 +279,10 @@ static inline void encode_writer_flush(struct encode_writer* writer) {
 }
 
 static inline void encode_writer_zeros(struct encode_writer* writer, unsigned count) {
-  // encode_writer_flush() leaves fewer than BASE62_VALUE_BITS bits buffered.
-  // Adding at most 56 bits therefore cannot overflow uint64_t.
+  /*
+   * encode_writer_flush() leaves fewer than BASE62_VALUE_BITS bits buffered.
+   * Adding at most 56 bits therefore cannot overflow uint64_t.
+   */
   while (count) {
     unsigned take = count > 56 ? 56 : count;
     writer->filled += take;
@@ -331,7 +331,7 @@ static int encode_set(int cnt, const unsigned* hash_arr, int bpp, char* base62_s
 }
 
 const char* set_fini(struct set* set, int bpp) {
-  // Implementation for finalizing the set
+  /* Implementation for finalizing the set */
 
   assert(set != NULL);
   assert(set->cnt > 0);
@@ -345,7 +345,7 @@ const char* set_fini(struct set* set, int bpp) {
 
   sort_symbols(set->symbols_v, set->cnt, bpp);
 
-  // warn on hash collizions
+  /* warn on hash collizions */
   for (size_t i = 0; i < set->cnt - 1; ++i) {
     if (set->symbols_v[i].hash != set->symbols_v[i + 1].hash) continue;
     const char* left = set->strings + set->symbols_v[i].offset;
@@ -358,7 +358,7 @@ const char* set_fini(struct set* set, int bpp) {
   unsigned unique_hash[set->cnt];
   int unique_cnt = 0;
 
-  // delete duplicates
+  /* delete duplicates */
   for (size_t i = 0; i < set->cnt; ++i) {
     while (i + 1 < set->cnt && set->symbols_v[i].hash == set->symbols_v[i + 1].hash) {
       ++i;
@@ -372,8 +372,6 @@ const char* set_fini(struct set* set, int bpp) {
   return xstrdup(base62_str);
 }
 
-// ---
-
 struct set_meta {
   const char* str;
   const char* payload;
@@ -386,8 +384,8 @@ struct set_meta {
 };
 
 static int set_meta_init(const char* str, struct set_meta* meta) {
-  // The header must be followed by at least one payload character.
-  if (!str[0] || !str[1] || !str[SET_HEADER_SIZE]) return -EINVAL;
+  /* The header must be followed by at least one payload character. */
+  if (!str[0] || !str[1] || !str[SET_HEADER_SIZE]) return -EPIPE;
 
   int bpp = str[0] + SET_PARAM_CHAR_OFFSET - 'a';
   if (bpp < SET_BPP_MIN || bpp > SET_BPP_MAX) return -ERANGE;
@@ -423,9 +421,9 @@ static int set_meta_fini(struct set_meta* meta) {
 
   return 0;
 }
-// clang-format off
+/* clang-format off */
 __extension__ static const unsigned char char_to_num[UCHAR_MAX + 1] = {
-  [0] = BASE62_END,  // конец строки
+  [0] = BASE62_END,  /* end of string */
   [1 ... ('0' - 1)] = BASE62_INVALID,
 
   ['0'] = 0, ['1'] = 1, ['2'] = 2, ['3'] = 3, ['4'] = 4,
@@ -451,10 +449,12 @@ __extension__ static const unsigned char char_to_num[UCHAR_MAX + 1] = {
 
   [('z' + 1) ... UCHAR_MAX] = BASE62_INVALID,
 };
-// clang-format on
+/* clang-format on */
 
-// Decode base62 and Golomb-Rice in one pass. Base62 is LSB-first; a Z escape contributes
-// BASE62_ESCAPE_CHUNK_BITS stream bits.
+/*
+ * Decode base62 and Golomb-Rice in one pass. Base62 is LSB-first; a Z escape contributes
+ * BASE62_ESCAPE_CHUNK_BITS stream bits.
+ */
 static inline int decode_chunk(const unsigned char** input, uint64_t* chunk, unsigned* width) {
   unsigned value = char_to_num[*(*input)++];
 
@@ -464,11 +464,11 @@ static inline int decode_chunk(const unsigned char** input, uint64_t* chunk, uns
     return 1;
   }
   if (value == BASE62_END) return 0;
-  if (value == BASE62_INVALID) return -EINVAL;
+  if (value == BASE62_INVALID) return -EILSEQ;
 
   unsigned escaped = char_to_num[*(*input)++];
-  if (escaped == BASE62_END) return -EINVAL;
-  if (escaped == BASE62_INVALID) return -EINVAL;
+  if (escaped == BASE62_END) return -EPIPE;
+  if (escaped == BASE62_INVALID) return -EILSEQ;
 
   unsigned high = escaped & BASE62_ESCAPE_HIGH_MASK;
   if (high == BASE62_ESCAPE_HIGH_MASK) return -EINVAL;
@@ -491,7 +491,7 @@ static int decode_set(const struct set_meta* meta, unsigned* hash_arr) {
   int count = 0;
 
   for (;;) {
-    // Unary quotient: zero bits terminated by one.
+    /* Unary quotient: zero bits terminated by one. */
     for (;;) {
       if (filled == 0) {
         uint64_t chunk;
@@ -525,7 +525,7 @@ static int decode_set(const struct set_meta* meta, unsigned* hash_arr) {
       break;
     }
 
-    // Fixed-width remainder.  At most 31+10 bits are held at once.
+    /* Fixed-width remainder.  At most 31+10 bits are held at once. */
     while (filled < Mshift) {
       uint64_t chunk;
       unsigned width;
@@ -546,8 +546,9 @@ static int decode_set(const struct set_meta* meta, unsigned* hash_arr) {
   }
 }
 
-// Bounded decoded-set cache: bucketed lookup plus O(1) LRU updates.
-static int downsample_set(int hash_cnt, const unsigned* hash_pt, unsigned* ds_pt, int target_bpp);
+/* Bounded decoded-set cache: bucketed lookup plus O(1) LRU updates. */
+static int downsample_set(const unsigned* hash_pt, size_t hash_cnt, unsigned* dest_pt,
+                          int target_bpp);
 
 static inline unsigned cache_bucket(uint32_t fingerprint, int target_bpp) {
   uint32_t mixed = fingerprint ^ ((uint32_t)target_bpp * UINT32_C(0x85ebca6b));
@@ -625,7 +626,7 @@ static int cache_decode_set(struct set_meta* meta, int target_bpp, const unsigne
     unsigned* destination = temporary;
 
     for (int bpp = meta->bpp - 1; bpp >= target_bpp; --bpp) {
-      cnt = downsample_set(cnt, current, destination, bpp);
+      cnt = downsample_set(current, (size_t)cnt, destination, bpp);
       unsigned* swap = current;
       current = destination;
       destination = swap;
@@ -673,15 +674,16 @@ static int cache_decode_set(struct set_meta* meta, int target_bpp, const unsigne
   return cnt;
 }
 
-// Reduce a set of (bpp + 1) values to a set of bpp values.
-static int downsample_set(int hash_cnt, const unsigned* hash_pt, unsigned* ds_pt, int target_bpp) {
+/* Reduce a set of (bpp + 1) values to a set of bpp values. */
+static int downsample_set(const unsigned* hash_pt, size_t hash_cnt, unsigned* dest_pt,
+                          int target_bpp) {
   unsigned mask = (1u << target_bpp) - 1;
 
-  // find the first element with high bit set
-  int l = 0;
-  int u = hash_cnt;
+  /* find the first element with high bit set */
+  size_t l = 0;
+  size_t u = hash_cnt;
   while (l < u) {
-    int i = (l + u) / 2;
+    size_t i = (l + u) / 2;
 
     if (hash_pt[i] <= mask) {
       l = i + 1;
@@ -690,33 +692,33 @@ static int downsample_set(int hash_cnt, const unsigned* hash_pt, unsigned* ds_pt
     }
   }
 
-  // initialize parts
-  const unsigned* ds_start = ds_pt;
+  /* initialize parts */
+  const unsigned* ds_start = dest_pt;
   const unsigned *v1 = hash_pt + 0, *v1_end = hash_pt + u;
   const unsigned *v2 = hash_pt + u, *v2_end = hash_pt + hash_cnt;
 
-  // merge v1 and v2 into w
+  /* merge v1 and v2 into w */
   if (v1 < v1_end && v2 < v2_end) {
     unsigned v1_val = *v1;
     unsigned v2_val = *v2 & mask;
 
     while (1) {
       if (v1_val < v2_val) {
-        *ds_pt++ = v1_val;
+        *dest_pt++ = v1_val;
         v1++;
 
         if (v1 == v1_end) break;
 
         v1_val = *v1;
       } else if (v2_val < v1_val) {
-        *ds_pt++ = v2_val;
+        *dest_pt++ = v2_val;
         v2++;
 
         if (v2 == v2_end) break;
 
         v2_val = *v2 & mask;
       } else {
-        *ds_pt++ = v1_val;
+        *dest_pt++ = v1_val;
         v1++;
         v2++;
 
@@ -729,11 +731,11 @@ static int downsample_set(int hash_cnt, const unsigned* hash_pt, unsigned* ds_pt
     }
   }
 
-  // append what's left
-  while (v1 < v1_end) *ds_pt++ = *v1++;
-  while (v2 < v2_end) *ds_pt++ = *v2++ & mask;
+  /* append what's left */
+  while (v1 < v1_end) *dest_pt++ = *v1++;
+  while (v2 < v2_end) *dest_pt++ = *v2++ & mask;
 
-  return (int)(ds_pt - ds_start);
+  return (int)(dest_pt - ds_start);
 }
 
 static const unsigned* step_lower_bound(const unsigned* first, const unsigned* last, unsigned value,
@@ -775,8 +777,10 @@ static int sorted_subset(const unsigned* small, size_t small_count, const unsign
   const unsigned* const large_end = large + large_count;
   size_t jump = large_count / small_count;
 
-  // Dense sets favor a conventional merge; sparse sets skip by approximately
-  // the mean distance between required values and then refine the last block.
+  /*
+   * Dense sets favor a conventional merge; sparse sets skip by approximately
+   * the mean distance between required values and then refine the last block.
+   */
   if (jump < 4) {
     while (small < small_end) {
       unsigned value = *small++;
@@ -798,7 +802,7 @@ static int sorted_subset(const unsigned* small, size_t small_count, const unsign
   return 1;
 }
 
-// main API routine
+/* main API routine */
 int rpmsetcmp(const char* str1, const char* str2) {
   if (strncmp(str1, "set:", 4) == 0) str1 += 4;
   if (strncmp(str2, "set:", 4) == 0) str2 += 4;
@@ -811,22 +815,26 @@ int rpmsetcmp(const char* str1, const char* str2) {
 
   int target_bpp = meta1.bpp < meta2.bpp ? meta1.bpp : meta2.bpp;
 
-  // Decode and cache the first operand at the comparison precision.
+  /* Decode and cache the first operand at the comparison precision. */
   const unsigned* hash_arr1 = NULL;
   int cnt1 = cache_decode_set(&meta1, target_bpp, &hash_arr1, 0);
   if (cnt1 < 0) return -3;
 
-  // Metadata for both operands has already been validated, and set1 has been
-  // decoded, so this preserves set8's malformed-input error precedence.
+  /*
+   * Metadata for both operands has already been validated, and set1 has been
+   * decoded, so this preserves set8's malformed-input error precedence.
+   */
   if (str1 == str2 || strcmp(str1, str2) == 0) return 0;
 
-  // Requirement sets are frequently reused by dependency solvers too.
+  /* Requirement sets are frequently reused by dependency solvers too. */
   const unsigned* hash_arr2 = NULL;
   int cnt2 = cache_decode_set(&meta2, target_bpp, &hash_arr2, 1);
   if (cnt2 < 0) return -4;
 
-  // Cardinality determines which strict-inclusion result is even possible.
-  // For equal cardinalities, sorted unique sets are equal iff their bytes match.
+  /*
+   * Cardinality determines which strict-inclusion result is even possible.
+   * For equal cardinalities, sorted unique sets are equal iff their bytes match.
+   */
   if (cnt1 == cnt2) {
     return memcmp(hash_arr1, hash_arr2, (size_t)cnt1 * sizeof(*hash_arr1)) == 0 ? 0 : -2;
   }
@@ -835,8 +843,6 @@ int rpmsetcmp(const char* str1, const char* str2) {
   }
   return sorted_subset(hash_arr1, (size_t)cnt1, hash_arr2, (size_t)cnt2) ? -1 : -2;
 }
-
-// ---
 
 #ifdef SELF_TEST
 static void test_hash(void) {
@@ -919,7 +925,7 @@ static void test_encode_decode(void) {
     uint64_t mask = bpp < 32 ? (UINT64_C(1) << bpp) - 1 : UINT32_MAX;
     unsigned values[VALUE_COUNT];
 
-    // uniform distribution of values
+    /* uniform distribution of values */
     for (int i = 0; i < VALUE_COUNT; ++i) {
       values[i] = (unsigned)(((uint64_t)(i + 1) * mask) / (VALUE_COUNT + 1));
     }
@@ -966,9 +972,9 @@ static void test_metadata_and_chunks(void) {
     {.input = "Zg", .rc = 1, .chunk = 62, .width = 10},
     {.input = "Zw", .rc = 1, .chunk = 63, .width = 10},
     {.input = "", .rc = 0, .chunk = 0, .width = 0},
-    {.input = "!", .rc = -EINVAL, .chunk = 0, .width = 0},
-    {.input = "Z", .rc = -EINVAL, .chunk = 0, .width = 0},
-    {.input = "Z!", .rc = -EINVAL, .chunk = 0, .width = 0},
+    {.input = "!", .rc = -EILSEQ, .chunk = 0, .width = 0},
+    {.input = "Z", .rc = -EPIPE, .chunk = 0, .width = 0},
+    {.input = "Z!", .rc = -EILSEQ, .chunk = 0, .width = 0},
     {.input = "ZM", .rc = -EINVAL, .chunk = 0, .width = 0},
   };
 
@@ -986,17 +992,17 @@ static void test_metadata_and_chunks(void) {
   }
 
   struct set_meta meta;
-  assert(set_meta_init("", &meta) == -EINVAL);  // too short
-  assert(set_meta_init("da", &meta) == -EINVAL);
-  assert(set_meta_init("ca0", &meta) == -ERANGE);  // incorrect bpp
+  assert(set_meta_init("", &meta) == -EPIPE); /* too short */
+  assert(set_meta_init("da", &meta) == -EPIPE);
+  assert(set_meta_init("ca0", &meta) == -ERANGE); /* incorrect bpp */
   assert(set_meta_init("{a0", &meta) == -ERANGE);
-  assert(set_meta_init("d`0", &meta) == -ERANGE);  // incorrect Mshift
+  assert(set_meta_init("d`0", &meta) == -ERANGE); /* incorrect Mshift */
   assert(set_meta_init("dz0", &meta) == -ERANGE);
-  assert(set_meta_init("dd0", &meta) == -EINVAL);  // Mshift == bpp
+  assert(set_meta_init("dd0", &meta) == -EINVAL); /* Mshift == bpp */
   assert(set_meta_init("da0", &meta) == 0);
-  assert(set_meta_fini(&meta) == -EINVAL);  // not enough data
+  assert(set_meta_fini(&meta) == -EINVAL); /* not enough data */
   assert(set_meta_init("da00", &meta) == 0);
-  assert(set_meta_fini(&meta) == 0);  // ok
+  assert(set_meta_fini(&meta) == 0); /* ok */
   assert(meta.len == 4);
   assert(meta.payload_len == 2);
   assert(meta.bit_capacity == 12);
@@ -1010,19 +1016,19 @@ static void test_downsample(void) {
   const unsigned mixed_expected[] = {0, 2, 5, 7};
 
   unsigned result[sizeof(mixed) / sizeof(*mixed)];
-  int count = downsample_set((int)(sizeof(mixed) / sizeof(*mixed)), mixed, result, 3);
+  int count = downsample_set(mixed, sizeof(mixed) / sizeof(*mixed), result, 3);
   assert(count == (int)(sizeof(mixed_expected) / sizeof(*mixed_expected)));
   assert(memcmp(result, mixed_expected, sizeof(mixed_expected)) == 0);
 
   const unsigned low[] = {1, 2, 3};
-  count = downsample_set((int)(sizeof(low) / sizeof(*low)), low, result,
-                         3);  // sizeof(result) >= sizeof(low)
+  count = downsample_set(low, sizeof(low) / sizeof(*low), result,
+                         3); /* sizeof(result) >= sizeof(low) */
   assert(count == (int)(sizeof(low) / sizeof(*low)));
   assert(memcmp(result, low, sizeof(low)) == 0);
 
   const unsigned high[] = {8, 9};
   const unsigned high_expected[] = {0, 1};
-  count = downsample_set((int)(sizeof(high) / sizeof(*high)), high, result, 3);
+  count = downsample_set(high, sizeof(high) / sizeof(*high), result, 3);
   assert(count == (int)(sizeof(high_expected) / sizeof(*high_expected)));
   assert(memcmp(result, high_expected, sizeof(high_expected)) == 0);
 
@@ -1034,7 +1040,7 @@ static void test_subset(void) {
   const unsigned dense_small[] = {2, 4, 6};
   const unsigned dense_missing[] = {2, 4, 8};
   assert(sorted_subset(dense_small, 3, dense_large, 7) == 1);
-  assert(sorted_subset(dense_missing, 3, dense_large, 7) == 0);  // 0 - incompatible
+  assert(sorted_subset(dense_missing, 3, dense_large, 7) == 0); /* 0 - incompatible */
 
   unsigned sparse_large[64];
   for (size_t i = 0; i < sizeof(sparse_large) / sizeof(*sparse_large); ++i) {
@@ -1071,7 +1077,7 @@ static void test_cache(void) {
   assert(second == first);
 
   unsigned downsampled[value_count];
-  int downsampled_count = downsample_set(value_count, values, downsampled, 15);
+  int downsampled_count = downsample_set(values, (size_t)value_count, downsampled, 15);
   assert(set_meta_init(encoded, &meta) == 0);
   assert(cache_decode_set(&meta, 15, &second, 0) == downsampled_count);
   assert(memcmp(second, downsampled, (size_t)downsampled_count * sizeof(*downsampled)) == 0);
