@@ -464,14 +464,14 @@ static inline int decode_chunk(const unsigned char** input, uint64_t* chunk, uns
     return 1;
   }
   if (value == BASE62_END) return 0;
-  if (value == BASE62_INVALID) return -EILSEQ;
+  if (value == BASE62_INVALID) return -EINVAL;
 
   unsigned escaped = char_to_num[*(*input)++];
   if (escaped == BASE62_END) return -EPIPE;
-  if (escaped == BASE62_INVALID) return -EILSEQ;
+  if (escaped == BASE62_INVALID) return -EINVAL;
 
   unsigned high = escaped & BASE62_ESCAPE_HIGH_MASK;
-  if (high == BASE62_ESCAPE_HIGH_MASK) return -EINVAL;
+  if (high == BASE62_ESCAPE_HIGH_MASK) return -EILSEQ;
 
   *chunk = (BASE62_ESCAPE_VALUE + (high >> BASE62_ESCAPE_BITS)) |
            ((uint64_t)(escaped & BASE62_ESCAPE_LOW_MASK) << BASE62_VALUE_BITS);
@@ -972,10 +972,10 @@ static void test_metadata_and_chunks(void) {
     {.input = "Zg", .rc = 1, .chunk = 62, .width = 10},
     {.input = "Zw", .rc = 1, .chunk = 63, .width = 10},
     {.input = "", .rc = 0, .chunk = 0, .width = 0},
-    {.input = "!", .rc = -EILSEQ, .chunk = 0, .width = 0},
+    {.input = "!", .rc = -EINVAL, .chunk = 0, .width = 0},
     {.input = "Z", .rc = -EPIPE, .chunk = 0, .width = 0},
-    {.input = "Z!", .rc = -EILSEQ, .chunk = 0, .width = 0},
-    {.input = "ZM", .rc = -EINVAL, .chunk = 0, .width = 0},
+    {.input = "Z!", .rc = -EINVAL, .chunk = 0, .width = 0},
+    {.input = "ZM", .rc = -EILSEQ, .chunk = 0, .width = 0},
   };
 
   for (size_t i = 0; i < sizeof(cases) / sizeof(*cases); ++i) {
