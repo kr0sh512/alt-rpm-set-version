@@ -546,6 +546,37 @@ static int decode_set(const struct set_meta* meta, unsigned* hash_arr) {
   }
 }
 
+#ifdef ARSV_SET9_EXPORT
+/* Test-only bridge used to translate existing repository metadata without
+ * reconstructing unavailable symbol names.  The caller owns *hashes. */
+int arsv_set9_decode(const char* source, unsigned** hashes, size_t* count, unsigned* bpp) {
+  if (!source || !hashes || !count || !bpp) return -EINVAL;
+
+  const char* str = source;
+  if (strncmp(str, "set:", 4) == 0) str += 4;
+
+  struct set_meta meta;
+  int rc = set_meta_init(str, &meta);
+  if (rc < 0) return rc;
+  rc = set_meta_fini(&meta);
+  if (rc < 0) return rc;
+
+  unsigned* values = malloc((size_t)meta.value_capacity * sizeof(*values));
+  if (!values) return -ENOMEM;
+
+  int decoded = decode_set(&meta, values);
+  if (decoded <= 0) {
+    free(values);
+    return decoded < 0 ? decoded : -EINVAL;
+  }
+
+  *hashes = values;
+  *count = (size_t)decoded;
+  *bpp = (unsigned)meta.bpp;
+  return 0;
+}
+#endif
+
 /* Bounded decoded-set cache: bucketed lookup plus O(1) LRU updates. */
 static int downsample_set(const unsigned* hash_pt, size_t hash_cnt, unsigned* dest_pt,
                           int target_bpp);
