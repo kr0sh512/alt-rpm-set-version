@@ -296,7 +296,25 @@ prepare_snapshot()
     printf '\n===== Preparing one immutable local Sisyphus metadata snapshot =====\n'
     rm -rf "$SNAPSHOT"
     mkdir -p "$SNAPSHOT/lists" "$SNAPSHOT/etc-apt/sources.list.d"
-    cp -a "$APT_LISTS_SOURCE/." "$SNAPSHOT/lists/"
+    python3 - "$APT_LISTS_SOURCE" "$SNAPSHOT/lists" <<'PY'
+import shutil
+import sys
+from pathlib import Path
+
+source, target = map(Path, sys.argv[1:])
+for entry in source.iterdir():
+    if entry.name in {"lock", "partial"}:
+        continue
+    destination = target / entry.name
+    if entry.is_symlink():
+        raise SystemExit(f"refusing symlink in APT lists: {entry}")
+    if entry.is_file():
+        shutil.copy2(entry, destination)
+    elif entry.is_dir():
+        shutil.copytree(entry, destination)
+    else:
+        raise SystemExit(f"unsupported entry in APT lists: {entry}")
+PY
     if [[ -f $APT_ETC_SOURCE/sources.list ]]; then
         cp -L "$APT_ETC_SOURCE/sources.list" "$SNAPSHOT/etc-apt/sources.list"
     else
@@ -305,8 +323,6 @@ prepare_snapshot()
     if [[ -d $APT_ETC_SOURCE/sources.list.d ]]; then
         cp -LR "$APT_ETC_SOURCE/sources.list.d/." "$SNAPSHOT/etc-apt/sources.list.d/"
     fi
-    rm -f "$SNAPSHOT/lists/lock"
-    rm -rf "$SNAPSHOT/lists/partial"
     mkdir -p "$SNAPSHOT/lists/partial"
 
     converter_output="$SNAPSHOT/conversion"
