@@ -18,7 +18,8 @@ PKGLIST_CONVERTER=${PKGLIST_CONVERTER:-$REPO_ROOT/new_version/direct_hash/apt_be
 
 WORK_ROOT=${WORK_ROOT:-$HOME/sisyphus-set9-d1-bench}
 RESULT_DIR=${RESULT_DIR:-$WORK_ROOT/results}
-IMAGE=${IMAGE:-registry.altlinux.org/sisyphus/alt:latest}
+APT_LISTS_SOURCE=${APT_LISTS_SOURCE:-/var/lib/apt/lists}
+APT_ETC_SOURCE=${APT_ETC_SOURCE:-/etc/apt}
 RPM_GIT=${RPM_GIT:-https://git.altlinux.org/gears/r/rpm.git}
 RPM_BRANCH=${RPM_BRANCH:-sisyphus}
 PACKAGER=${PACKAGER:-krosh <gudovdo@my.msu.ru>}
@@ -39,11 +40,14 @@ The script has no positional arguments. Configuration is passed through env:
   RESET_WORK=0 OPERATIONS='unmet check' ./scripts/run-sisyphus-set9-d1-bench.sh
 
 Main variables:
-  WORK_ROOT, RESULT_DIR, IMAGE, RPM_GIT, RPM_BRANCH, PACKAGER,
+  WORK_ROOT, RESULT_DIR, APT_LISTS_SOURCE, APT_ETC_SOURCE,
+  RPM_GIT, RPM_BRANCH, PACKAGER,
   SET9_C, D1_C, PKGLIST_CONVERTER, CPU, ROUNDS, RESET_WORK, OPERATIONS.
 
 RESET_WORK=1 removes WORK_ROOT after running hsh --cleanup-only for old hasher
 workdirs. Timed runs never update repositories and never install packages.
+Run apt-get update on the Sisyphus host before RESET_WORK=1; the script snapshots
+the existing local APT lists and performs no metadata download itself.
 EOF
 }
 
@@ -72,12 +76,32 @@ safe_remove_work_root()
     fi
 }
 
+canonical_work_subdir()
+{
+    local path=$1 label=$2 resolved
+    [[ ! -L $path ]] || fail "$label must not be a symlink: $path"
+    resolved=$(realpath -e -- "$path") || fail "$label does not resolve: $path"
+    [[ $resolved == "$WORK_ROOT/"* ]] ||
+        fail "$label resolves outside WORK_ROOT: $path -> $resolved"
+    printf '%s' "$resolved"
+}
+
+ensure_work_subdir()
+{
+    local path=$1 label=$2 resolved
+    [[ ! -L $path ]] || fail "$label must not be a symlink: $path"
+    resolved=$(realpath -m -- "$path")
+    [[ $resolved == "$WORK_ROOT/"* ]] ||
+        fail "$label resolves outside WORK_ROOT: $path -> $resolved"
+    mkdir -p -- "$path"
+    canonical_work_subdir "$path" "$label" >/dev/null
+}
+
 write_snapshot_fingerprint()
 {
     {
-        printf 'image=%s\n' "$IMAGE"
-        printf 'image_digest=%s\n' "$(podman image inspect "$IMAGE" --format '{{.Digest}}')"
-        printf 'image_id=%s\n' "$(podman image inspect "$IMAGE" --format '{{.Id}}')"
+        printf 'apt_lists_source=%s\n' "$APT_LISTS_SOURCE"
+        printf 'apt_etc_source=%s\n' "$APT_ETC_SOURCE"
         printf 'converter=%s\n' "$(sha256sum "$PKGLIST_CONVERTER" | awk '{print $1}')"
         printf 'set9=%s\n' "$(sha256sum "$SET9_C" | awk '{print $1}')"
         printf 'rewrite=%s\n' "$(sha256sum "$REPO_ROOT/new_version/direct_hash/apt_benchmark/rewrite_sisyphus_pkglist.c" | awk '{print $1}')"
@@ -266,59 +290,42 @@ run_once()
 
 prepare_snapshot()
 {
-    local image_digest image_id converter_rel
+    local converter_output
     validate_snapshot_reuse && return
 
-    case $PKGLIST_CONVERTER in
-        "$REPO_ROOT"/*) converter_rel=${PKGLIST_CONVERTER#"$REPO_ROOT/"} ;;
-        *) fail "PKGLIST_CONVERTER must be inside REPO_ROOT: $PKGLIST_CONVERTER" ;;
-    esac
-
-    printf '\n===== Preparing one immutable Sisyphus metadata snapshot =====\n'
+    printf '\n===== Preparing one immutable local Sisyphus metadata snapshot =====\n'
     rm -rf "$SNAPSHOT"
-    mkdir -p "$SNAPSHOT/container-output"
-    podman pull "$IMAGE"
-    image_digest=$(podman image inspect "$IMAGE" --format '{{.Digest}}')
-    image_id=$(podman image inspect "$IMAGE" --format '{{.Id}}')
-
-    podman run --rm \
-        -e "ARSV_IMAGE=$IMAGE" \
-        -e "ARSV_IMAGE_DIGEST=$image_digest" \
-        -e "ARSV_IMAGE_ID=$image_id" \
-        -e "ARSV_CONVERTER_REL=$converter_rel" \
-        -v "$REPO_ROOT:/src:ro" \
-        -v "$SNAPSHOT/container-output:/out:rw" \
-        "$IMAGE" sh -euc '
-            apt-get update >/dev/null
-            apt-get install -y gcc librpm-devel apt-repo-tools python3 >/dev/null
-            python3 "/src/$ARSV_CONVERTER_REL" \
-                --inner /out/conversion \
-                --image "$ARSV_IMAGE" \
-                --image-digest "$ARSV_IMAGE_DIGEST" \
-                --image-id "$ARSV_IMAGE_ID"
-            cp -a /var/lib/apt/lists /out/original-lists
-            cp -a /etc/apt /out/etc-apt
-        '
-
-    mv "$SNAPSHOT/container-output/original-lists" "$SNAPSHOT/lists"
-    mv "$SNAPSHOT/container-output/etc-apt" "$SNAPSHOT/etc-apt"
-    mv "$SNAPSHOT/container-output/conversion/d1-pkglists/manifest.json" "$SNAPSHOT/manifest.json"
-    mkdir -p "$SNAPSHOT/d1-pkglists"
-    mv "$SNAPSHOT/container-output/conversion/d1-pkglists/"*.classic "$SNAPSHOT/d1-pkglists/"
-    rm -rf "$SNAPSHOT/container-output"
+    mkdir -p "$SNAPSHOT/lists" "$SNAPSHOT/etc-apt/sources.list.d"
+    cp -a "$APT_LISTS_SOURCE/." "$SNAPSHOT/lists/"
+    if [[ -f $APT_ETC_SOURCE/sources.list ]]; then
+        cp -L "$APT_ETC_SOURCE/sources.list" "$SNAPSHOT/etc-apt/sources.list"
+    else
+        : >"$SNAPSHOT/etc-apt/sources.list"
+    fi
+    if [[ -d $APT_ETC_SOURCE/sources.list.d ]]; then
+        cp -LR "$APT_ETC_SOURCE/sources.list.d/." "$SNAPSHOT/etc-apt/sources.list.d/"
+    fi
     rm -f "$SNAPSHOT/lists/lock"
     rm -rf "$SNAPSHOT/lists/partial"
-    mkdir -p "$SNAPSHOT/lists/partial" "$SNAPSHOT/etc-apt/sources.list.d"
-    [[ -e $SNAPSHOT/etc-apt/sources.list ]] || : >"$SNAPSHOT/etc-apt/sources.list"
+    mkdir -p "$SNAPSHOT/lists/partial"
+
+    converter_output="$SNAPSHOT/conversion"
+    python3 "$PKGLIST_CONVERTER" "$converter_output" \
+        --lists-dir "$SNAPSHOT/lists"
+    mv "$converter_output/d1-pkglists/manifest.json" "$SNAPSHOT/manifest.json"
+    mkdir -p "$SNAPSHOT/d1-pkglists"
+    mv "$converter_output/d1-pkglists/"*.classic "$SNAPSHOT/d1-pkglists/"
+    rmdir "$converter_output/d1-pkglists" "$converter_output"
     write_snapshot_fingerprint >"$SNAPSHOT/input-fingerprint.txt"
     : >"$SNAPSHOT/.complete"
 }
 
 prepare_variant_lists()
 {
-    local variant=$1 format=$2
+    local variant=$1 format=$2 variant_apt
     if [[ -d $variant/apt ]]; then
-        chmod -R u+w "$variant/apt"
+        variant_apt=$(canonical_work_subdir "$variant/apt" 'APT variant directory')
+        chmod -R u+w "$variant_apt"
     fi
     rm -rf "$variant/apt"
     mkdir -p "$variant/apt/lists" "$variant/apt/cache/archives/partial"
@@ -502,9 +509,8 @@ write_provenance()
         printf 'rpm_git=%s\n' "$RPM_GIT"
         printf 'rpm_branch=%s\n' "$RPM_BRANCH"
         printf 'rpm_commit=%s\n' "$(git -C "$SOURCE_BASE" rev-parse HEAD)"
-        printf 'image=%s\n' "$IMAGE"
-        printf 'image_digest=%s\n' "$(podman image inspect "$IMAGE" --format '{{.Digest}}')"
-        printf 'image_id=%s\n' "$(podman image inspect "$IMAGE" --format '{{.Id}}')"
+        printf 'apt_lists_source=%s\n' "$APT_LISTS_SOURCE"
+        printf 'apt_etc_source=%s\n' "$APT_ETC_SOURCE"
         printf 'apt=%s\n' "$(rpmquery --qf '%{VERSION}-%{RELEASE}' apt)"
         printf 'rpm=%s\n' "$(rpm --version)"
         printf 'cpu=%s\n' "$CPU"
@@ -634,8 +640,8 @@ if [[ ${1:-} == --help || ${1:-} == -h ]]; then
 fi
 (($# == 0)) || fail "unexpected arguments; use --help"
 
-for command in git podman gear-hsh hsh rpm rpmquery rpm2cpio cpio taskset awk sed \
-    date sha256sum stat ldd python3 cmp cp mv tee realpath mktemp grep; do
+for command in git gear-hsh hsh rpm rpmquery rpm2cpio cpio taskset awk sed cc \
+    pkglist-query date sha256sum stat ldd python3 cmp cp mv tee realpath mktemp grep; do
     command -v "$command" >/dev/null || fail "required command not found: $command"
 done
 [[ -n $APT_CACHE && -x $APT_CACHE ]] || fail "apt-cache not found: $APT_CACHE"
@@ -644,6 +650,7 @@ done
 [[ -f $D1_C ]] || fail "D1 source not found: $D1_C"
 [[ -f $PKGLIST_CONVERTER ]] || fail "pkglist converter not found: $PKGLIST_CONVERTER"
 [[ $ROUNDS =~ ^[1-9][0-9]*$ ]] || fail "ROUNDS must be a positive integer"
+[[ $RESET_WORK =~ ^[01]$ ]] || fail "RESET_WORK must be 0 or 1"
 taskset -c "$CPU" true >/dev/null 2>&1 || fail "CPU $CPU is unavailable to taskset"
 read -r -a OPERATION_LIST <<<"$OPERATIONS"
 ((${#OPERATION_LIST[@]} > 0)) || fail "OPERATIONS is empty"
@@ -657,8 +664,15 @@ done
 HOME_REAL=$(realpath -m "$HOME")
 CWD_REAL=$(realpath -m "$PWD")
 REPO_ROOT=$(realpath -m "$REPO_ROOT")
+SET9_C=$(realpath -m "$SET9_C")
+D1_C=$(realpath -m "$D1_C")
+PKGLIST_CONVERTER=$(realpath -m "$PKGLIST_CONVERTER")
+APT_LISTS_SOURCE=$(realpath -m "$APT_LISTS_SOURCE")
+APT_ETC_SOURCE=$(realpath -m "$APT_ETC_SOURCE")
 WORK_ROOT=$(realpath -m "$WORK_ROOT")
 RESULT_DIR=$(realpath -m "$RESULT_DIR")
+[[ -d $APT_LISTS_SOURCE ]] || fail "APT lists directory not found: $APT_LISTS_SOURCE"
+[[ -d $APT_ETC_SOURCE ]] || fail "APT configuration directory not found: $APT_ETC_SOURCE"
 [[ $RESULT_DIR == "$WORK_ROOT"/* ]] ||
     fail "RESULT_DIR must be inside WORK_ROOT: $RESULT_DIR"
 
@@ -675,11 +689,13 @@ if ((RESET_WORK)); then
     safe_remove_work_root
     for old_hasher in "$SET9_VARIANT/hasher" "$D1_VARIANT/hasher"; do
         [[ -d $old_hasher ]] || continue
+        old_hasher=$(canonical_work_subdir "$old_hasher" 'hasher workdir')
         hsh --cleanup-only --workdir="$old_hasher" ||
             fail "hasher cleanup failed: $old_hasher"
     done
     for old_apt in "$SET9_VARIANT/apt" "$D1_VARIANT/apt"; do
         [[ -d $old_apt ]] || continue
+        old_apt=$(canonical_work_subdir "$old_apt" 'APT workdir')
         chmod -R u+w "$old_apt"
     done
     rm -rf "$WORK_ROOT"
@@ -691,7 +707,7 @@ elif ((WORK_ROOT_EXISTED)); then
     grep -Fx 'ARSV Sisyphus set9/D1 benchmark work root' "$marker" >/dev/null ||
         fail "invalid WORK_ROOT ownership marker: $marker"
 fi
-mkdir -p "$WORK_ROOT/src" "$WORK_ROOT/variants" "$COMMON/root/var/lib/rpm" "$RESULT_DIR"
+mkdir -p "$WORK_ROOT"
 MARKER="$WORK_ROOT/.arsv-sisyphus-set-bench-root"
 if [[ -e $MARKER ]]; then
     grep -Fx 'ARSV Sisyphus set9/D1 benchmark work root' "$MARKER" >/dev/null ||
@@ -699,6 +715,10 @@ if [[ -e $MARKER ]]; then
 else
     printf '%s\n' 'ARSV Sisyphus set9/D1 benchmark work root' >"$MARKER"
 fi
+ensure_work_subdir "$WORK_ROOT/src" 'source directory'
+ensure_work_subdir "$WORK_ROOT/variants" 'variants directory'
+ensure_work_subdir "$COMMON/root/var/lib/rpm" 'isolated RPM database directory'
+ensure_work_subdir "$RESULT_DIR" 'results directory'
 : >"$COMMON/apt.conf"
 : >"$COMMON/status"
 

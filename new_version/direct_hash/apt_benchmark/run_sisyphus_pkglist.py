@@ -7,7 +7,6 @@ import argparse
 import hashlib
 import json
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -17,7 +16,6 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
-DEFAULT_IMAGE = "registry.altlinux.org/sisyphus/alt:latest"
 ARCHITECTURES = ("x86_64", "noarch")
 SUMMARY_RE = re.compile(
     r"headers=(?P<headers>\d+) set_occurrences=(?P<set_occurrences>\d+) "
@@ -214,27 +212,15 @@ def convert_one(converter: Path, source: Path, destination: Path) -> dict[str, o
     }
 
 
-def image_metadata(image: str) -> dict[str, str]:
-    result = run(
-        [
-            "podman",
-            "image",
-            "inspect",
-            image,
-            "--format",
-            "{{.Digest}}|{{.Id}}",
-        ]
-    )
-    digest, image_id = result.stdout.decode().strip().split("|", 1)
-    return {"name": image, "digest": digest, "id": image_id}
-
-
-def inner(output: Path, image: str, image_digest: str, image_id: str) -> None:
+def convert_local(output: Path, lists_dir: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
     if any(output.iterdir()):
         raise RuntimeError(f"output directory is not empty: {output}")
 
-    pkglists = find_pkglists(Path("/var/lib/apt/lists"))
+    lists_dir = lists_dir.expanduser().resolve()
+    if not lists_dir.is_dir():
+        raise RuntimeError(f"APT lists directory does not exist: {lists_dir}")
+    pkglists = find_pkglists(lists_dir)
     staging = Path(tempfile.mkdtemp(prefix=".d1-staging-", dir=output))
     try:
         converter = staging / "rewrite-sisyphus-pkglist"
@@ -250,7 +236,7 @@ def inner(output: Path, image: str, image_digest: str, image_id: str) -> None:
         manifest = {
             "format": 1,
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "image": {"name": image, "digest": image_digest, "id": image_id},
+            "input": {"lists_dir": str(lists_dir)},
             "rpm": run(["rpm", "--version"]).stdout.decode().strip(),
             "apt": run(["rpmquery", "--qf", "%{VERSION}-%{RELEASE}", "apt"])
             .stdout.decode()
@@ -280,55 +266,17 @@ def inner(output: Path, image: str, image_digest: str, image_id: str) -> None:
         raise
 
 
-def outer(output: Path, image: str) -> None:
-    if output.exists() and any(output.iterdir()):
-        raise RuntimeError(f"output directory is not empty: {output}")
-    output.mkdir(parents=True, exist_ok=True)
-    run(["podman", "pull", image], stdout=None)
-    metadata = image_metadata(image)
-    inner_command = [
-        "python3",
-        "/src/new_version/direct_hash/apt_benchmark/run_sisyphus_pkglist.py",
-        "--inner",
-        "/out",
-        "--image",
-        image,
-        "--image-digest",
-        metadata["digest"],
-        "--image-id",
-        metadata["id"],
-    ]
-    command = [
-        "podman",
-        "run",
-        "--rm",
-        "-v",
-        f"{ROOT}:/src:ro",
-        "-v",
-        f"{output}:/out:rw",
-        image,
-        "sh",
-        "-lc",
-        (
-            "apt-get update >/dev/null && "
-            "apt-get install -y gcc librpm-devel apt-repo-tools python3 >/dev/null && "
-            + " ".join(shlex.quote(argument) for argument in inner_command)
-        ),
-    ]
-    result = subprocess.run(command, check=False)
-    if result.returncode != 0:
-        raise RuntimeError(f"container conversion failed with status {result.returncode}")
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Create D1 copies of current Sisyphus x86_64/noarch pkglist files"
+        description="Create D1 copies of local Sisyphus x86_64/noarch pkglist files"
     )
     parser.add_argument("output", type=Path, help="new or empty output directory")
-    parser.add_argument("--image", default=DEFAULT_IMAGE)
-    parser.add_argument("--image-digest", default="", help=argparse.SUPPRESS)
-    parser.add_argument("--image-id", default="", help=argparse.SUPPRESS)
-    parser.add_argument("--inner", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--lists-dir",
+        type=Path,
+        default=Path("/var/lib/apt/lists"),
+        help="APT lists snapshot to convert (default: /var/lib/apt/lists)",
+    )
     return parser.parse_args()
 
 
@@ -336,10 +284,7 @@ def main() -> int:
     args = parse_args()
     try:
         output = validate_output(args.output)
-        if args.inner:
-            inner(output, args.image, args.image_digest, args.image_id)
-        else:
-            outer(output, args.image)
+        convert_local(output, args.lists_dir)
     except (OSError, RuntimeError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
