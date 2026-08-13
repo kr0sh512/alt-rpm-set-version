@@ -84,13 +84,16 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def compile_converter(destination: Path) -> None:
+def compile_converter(
+    destination: Path,
+    rpm_include_dir: Path | None = None,
+    rpm_libraries: tuple[Path, ...] = (),
+) -> None:
     include = destination.parent / "compat-include"
     include.mkdir()
     for name in ("rpmlib.h", "system.h", "set.h"):
         (include / name).touch()
-    run(
-        [
+    command = [
             "cc",
             "-O2",
             "-std=gnu11",
@@ -102,16 +105,23 @@ def compile_converter(destination: Path) -> None:
             "-DARSV_WITH_RPM",
             "-I",
             str(include),
+    ]
+    if rpm_include_dir is not None:
+        command.extend(["-I", str(rpm_include_dir)])
+    command.extend(
+        [
             "-include",
             str(ROOT / "scripts/rpmsetcmp/newset_compat.h"),
             str(ROOT / "reimplement/set9.c"),
             str(HERE / "rewrite_sisyphus_pkglist.c"),
-            "-lrpm",
-            "-lrpmio",
-            "-o",
-            str(destination),
         ]
     )
+    if rpm_libraries:
+        command.extend(str(path) for path in rpm_libraries)
+    else:
+        command.extend(["-lrpm", "-lrpmio"])
+    command.extend(["-o", str(destination)])
+    run(command)
 
 
 def find_pkglists(lists_dir: Path) -> dict[str, Path]:
@@ -212,7 +222,12 @@ def convert_one(converter: Path, source: Path, destination: Path) -> dict[str, o
     }
 
 
-def convert_local(output: Path, lists_dir: Path) -> None:
+def convert_local(
+    output: Path,
+    lists_dir: Path,
+    rpm_include_dir: Path | None = None,
+    rpm_libraries: tuple[Path, ...] = (),
+) -> None:
     output.mkdir(parents=True, exist_ok=True)
     if any(output.iterdir()):
         raise RuntimeError(f"output directory is not empty: {output}")
@@ -224,7 +239,7 @@ def convert_local(output: Path, lists_dir: Path) -> None:
     staging = Path(tempfile.mkdtemp(prefix=".d1-staging-", dir=output))
     try:
         converter = staging / "rewrite-sisyphus-pkglist"
-        compile_converter(converter)
+        compile_converter(converter, rpm_include_dir, rpm_libraries)
         architectures: dict[str, object] = {}
         for architecture in ARCHITECTURES:
             destination = staging / f"Sisyphus.{architecture}.pkglist.classic"
@@ -277,6 +292,18 @@ def parse_args() -> argparse.Namespace:
         default=Path("/var/lib/apt/lists"),
         help="APT lists snapshot to convert (default: /var/lib/apt/lists)",
     )
+    parser.add_argument(
+        "--rpm-include-dir",
+        type=Path,
+        help="directory containing rpm/header.h (for an unpacked librpm-devel)",
+    )
+    parser.add_argument(
+        "--rpm-library",
+        type=Path,
+        action="append",
+        default=[],
+        help="versioned RPM library to link; repeat for librpm and librpmio",
+    )
     return parser.parse_args()
 
 
@@ -284,7 +311,20 @@ def main() -> int:
     args = parse_args()
     try:
         output = validate_output(args.output)
-        convert_local(output, args.lists_dir)
+        rpm_include_dir = (
+            args.rpm_include_dir.expanduser().resolve()
+            if args.rpm_include_dir is not None
+            else None
+        )
+        rpm_libraries = tuple(path.expanduser().resolve() for path in args.rpm_library)
+        if rpm_include_dir is not None and not (rpm_include_dir / "rpm/header.h").is_file():
+            raise ValueError(f"rpm/header.h not found below: {rpm_include_dir}")
+        if rpm_libraries and len(rpm_libraries) != 2:
+            raise ValueError("pass exactly two --rpm-library values: librpm and librpmio")
+        for library in rpm_libraries:
+            if not library.is_file():
+                raise ValueError(f"RPM library not found: {library}")
+        convert_local(output, args.lists_dir, rpm_include_dir, rpm_libraries)
     except (OSError, RuntimeError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

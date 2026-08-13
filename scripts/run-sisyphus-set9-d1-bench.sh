@@ -15,6 +15,9 @@ REPO_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 SET9_C=${SET9_C:-$REPO_ROOT/reimplement/set9.c}
 D1_C=${D1_C:-$REPO_ROOT/new_version/direct_hash/hash_set.c}
 PKGLIST_CONVERTER=${PKGLIST_CONVERTER:-$REPO_ROOT/new_version/direct_hash/apt_benchmark/run_sisyphus_pkglist.py}
+SET_REWRITER_C=$REPO_ROOT/new_version/direct_hash/apt_benchmark/rewrite_sisyphus_pkglist.c
+SET_COMPAT_H=$REPO_ROOT/scripts/rpmsetcmp/newset_compat.h
+ORCHESTRATOR=$(realpath -e -- "${BASH_SOURCE[0]}")
 
 WORK_ROOT=${WORK_ROOT:-$HOME/sisyphus-set9-d1-bench}
 RESULT_DIR=${RESULT_DIR:-$WORK_ROOT/results}
@@ -99,17 +102,38 @@ write_snapshot_fingerprint()
 {
     {
         printf 'sisyphus_mirror=%s\n' "$SISYPHUS_MIRROR"
+        printf 'orchestrator=%s\n' "$(sha256sum "$ORCHESTRATOR" | awk '{print $1}')"
         printf 'converter=%s\n' "$(sha256sum "$PKGLIST_CONVERTER" | awk '{print $1}')"
         printf 'set9=%s\n' "$(sha256sum "$SET9_C" | awk '{print $1}')"
+        printf 'd1=%s\n' "$(sha256sum "$D1_C" | awk '{print $1}')"
         printf 'rewrite=%s\n' "$(sha256sum "$REPO_ROOT/new_version/direct_hash/apt_benchmark/rewrite_sisyphus_pkglist.c" | awk '{print $1}')"
         printf 'compat=%s\n' "$(sha256sum "$REPO_ROOT/scripts/rpmsetcmp/newset_compat.h" | awk '{print $1}')"
+        [[ ! -f $SNAPSHOT/devel-input-fingerprint.txt ]] ||
+            cat "$SNAPSHOT/devel-input-fingerprint.txt"
+        write_runtime_fingerprint
     }
+}
+
+write_runtime_fingerprint()
+{
+    local rpm_libdir library resolved owner
+    rpm_libdir=$(rpm --eval '%{_libdir}')
+    for library in librpm.so.7 librpmio.so.7; do
+        resolved=$(realpath -e "$rpm_libdir/$library") ||
+            fail "installed $library not found"
+        owner=$(rpm -qf --qf '%{NAME}|%{SOURCERPM}|%{DISTTAG}' "$resolved") ||
+            fail "cannot identify package owning $resolved"
+        printf 'runtime_%s_owner=%s\n' "$library" "$owner"
+        printf 'runtime_%s_sha256=%s\n' "$library" \
+            "$(sha256sum "$resolved" | awk '{print $1}')"
+    done
 }
 
 validate_snapshot_reuse()
 {
     local current
-    [[ -f $SNAPSHOT/.complete && -f $SNAPSHOT/input-fingerprint.txt ]] || return 1
+    [[ -f $SNAPSHOT/.complete && -f $SNAPSHOT/input-fingerprint.txt &&
+       -f $SNAPSHOT/devel-input-fingerprint.txt ]] || return 1
     current=$(mktemp)
     write_snapshot_fingerprint >"$current"
     if ! cmp -s "$current" "$SNAPSHOT/input-fingerprint.txt"; then
@@ -163,10 +187,52 @@ prepare_spec()
 " "$spec"
 }
 
+prepare_d1_build_corpus()
+{
+    local source=$1 spec helper_dir
+    spec=$source/alt/rpm.spec
+    helper_dir=$source/alt/arsv-d1-build
+    mkdir -p "$helper_dir"
+    cp "$SET9_C" "$helper_dir/set9.c"
+    cp "$SET_REWRITER_C" "$helper_dir/rewrite_sisyphus_pkglist.c"
+    cp "$SET_COMPAT_H" "$helper_dir/newset_compat.h"
+
+    python3 - "$spec" <<'PY'
+import sys
+from pathlib import Path
+
+spec = Path(sys.argv[1])
+text = spec.read_text()
+needle = "join -o 1.3,2.3 P R |shuf >setcmp-data\n"
+replacement = needle + r'''# The buildroot RPM database contains legacy set9 values.  This D1 build
+# preserves the same relation corpus, but converts both operands before the
+# format-specific setcmp/profile checks instead of feeding incompatible input.
+mkdir -p arsv-d1-compat
+touch arsv-d1-compat/rpmlib.h arsv-d1-compat/system.h arsv-d1-compat/set.h
+%__cc %optflags -std=gnu11 -Wall -Wextra -Werror -D_GNU_SOURCE -DARSV_SET9_EXPORT \
+    -I arsv-d1-compat -include alt/arsv-d1-build/newset_compat.h \
+    alt/arsv-d1-build/set9.c alt/arsv-d1-build/rewrite_sisyphus_pkglist.c \
+    -o arsv-convert-set
+while read -r set1 set2; do
+    d1_set1=$(./arsv-convert-set --convert-set "$set1")
+    d1_set2=$(./arsv-convert-set --convert-set "$set2")
+    printf '%%s %%s\n' "$d1_set1" "$d1_set2"
+done <setcmp-data >setcmp-data.d1
+test "$(wc -l <setcmp-data.d1)" -eq "$(wc -l <setcmp-data)"
+mv setcmp-data.d1 setcmp-data
+'''
+if text.count(needle) != 1:
+    raise SystemExit(f"expected exactly one setcmp corpus creation in {spec}")
+spec.write_text(text.replace(needle, replacement))
+PY
+    git -C "$source" add alt/arsv-d1-build
+}
+
 apt_options()
 {
     local variant=$1
     APT_OPTIONS=(
+        -o 'Debug::NoLocking=true'
         -o 'Dir::Etc::main=-'
         -o 'Dir::Etc::parts=-'
         -o "Dir::Etc::sourcelist=$SNAPSHOT/etc-apt/sources.list"
@@ -287,8 +353,10 @@ run_once()
 
 prepare_snapshot()
 {
-    local converter_output
+    local converter_output devel_cache devel_root rpm_libdir rpm_library rpmio_library
+    local devel_source runtime_source rpmfile
     local -a update_options
+    local -a rpm_devel_rpms popt_devel_rpms
     validate_snapshot_reuse && return
 
     printf '\n===== Preparing one immutable Sisyphus metadata snapshot =====\n'
@@ -319,14 +387,69 @@ prepare_snapshot()
     APT_CONFIG="$COMMON/apt.conf" "$APT_GET" -qq \
         "${update_options[@]}" update
 
+    # The converter needs C headers, but the benchmark host intentionally need
+    # not have development packages installed. Download the p11 packages that
+    # match the host's installed librpm into a private cache and extract only
+    # their headers; no system package is installed or changed.
+    devel_cache="$SNAPSHOT/devel-cache"
+    devel_root="$SNAPSHOT/devel-root"
+    mkdir -p "$devel_cache/archives/partial" "$devel_root"
+    env -u APT_CONFIG "$APT_GET" -qq -y -d \
+        -o "Dir::Cache=$devel_cache" \
+        -o "Dir::Cache::archives=$devel_cache/archives" \
+        -o "Dir::Cache::pkgcache=$devel_cache/pkgcache.bin" \
+        -o "Dir::Cache::srcpkgcache=$devel_cache/srcpkgcache.bin" \
+        install librpm-devel
+    shopt -s nullglob
+    rpm_devel_rpms=("$devel_cache"/archives/librpm-devel_*.rpm)
+    popt_devel_rpms=("$devel_cache"/archives/libpopt-devel_*.rpm)
+    shopt -u nullglob
+    ((${#rpm_devel_rpms[@]} == 1)) ||
+        fail "expected one downloaded librpm-devel RPM, got ${#rpm_devel_rpms[@]}"
+    ((${#popt_devel_rpms[@]} == 1)) ||
+        fail "expected one downloaded libpopt-devel RPM, got ${#popt_devel_rpms[@]}"
+    devel_source=$(rpm -qp --qf '%{SOURCERPM}|%{DISTTAG}' "${rpm_devel_rpms[0]}") ||
+        fail 'cannot identify downloaded librpm-devel source package'
+    for rpmfile in "${rpm_devel_rpms[@]}" "${popt_devel_rpms[@]}"; do
+        (cd "$devel_root" && rpm2cpio "$rpmfile" | cpio -idm --quiet './usr/include/*')
+    done
+    [[ -f $devel_root/usr/include/rpm/header.h && -f $devel_root/usr/include/popt.h ]] ||
+        fail 'failed to extract RPM development headers'
+    rpm_libdir=$(rpm --eval '%{_libdir}')
+    rpm_library=$(realpath -e "$rpm_libdir/librpm.so.7") ||
+        fail 'installed librpm.so.7 not found'
+    rpmio_library=$(realpath -e "$rpm_libdir/librpmio.so.7") ||
+        fail 'installed librpmio.so.7 not found'
+    for rpmfile in "$rpm_library" "$rpmio_library"; do
+        runtime_source=$(rpm -qf --qf '%{SOURCERPM}|%{DISTTAG}' "$rpmfile") ||
+            fail "cannot identify runtime package owning $rpmfile"
+        [[ $runtime_source == "$devel_source" ]] ||
+            fail "downloaded librpm-devel ($devel_source) does not match $rpmfile ($runtime_source)"
+    done
+    {
+        printf 'devel_librpm_identity=%s|%s\n' \
+            "$(rpm -qp --qf '%{NAME}|%{EVR}|%{DISTTAG}|%{ARCH}' "${rpm_devel_rpms[0]}")" \
+            "$devel_source"
+        printf 'devel_librpm_sha256=%s\n' \
+            "$(sha256sum "${rpm_devel_rpms[0]}" | awk '{print $1}')"
+        printf 'devel_popt_identity=%s\n' \
+            "$(rpm -qp --qf '%{NAME}|%{EVR}|%{DISTTAG}|%{ARCH}' "${popt_devel_rpms[0]}")"
+        printf 'devel_popt_sha256=%s\n' \
+            "$(sha256sum "${popt_devel_rpms[0]}" | awk '{print $1}')"
+    } >"$SNAPSHOT/devel-input-fingerprint.txt"
+
     converter_output="$SNAPSHOT/conversion"
     python3 "$PKGLIST_CONVERTER" "$converter_output" \
-        --lists-dir "$SNAPSHOT/lists"
+        --lists-dir "$SNAPSHOT/lists" \
+        --rpm-include-dir "$devel_root/usr/include" \
+        --rpm-library "$rpm_library" \
+        --rpm-library "$rpmio_library"
     mv "$converter_output/d1-pkglists/manifest.json" "$SNAPSHOT/manifest.json"
     mkdir -p "$SNAPSHOT/d1-pkglists"
     mv "$converter_output/d1-pkglists/"*.classic "$SNAPSHOT/d1-pkglists/"
     rmdir "$converter_output/d1-pkglists" "$converter_output"
     rm -rf "$SNAPSHOT/download-cache"
+    rm -rf "$devel_cache" "$devel_root"
     rm -f "$SNAPSHOT/lists/lock"
     rm -rf "$SNAPSHOT/lists/partial"
     mkdir -p "$SNAPSHOT/lists/partial"
@@ -387,9 +510,15 @@ build_variant()
     expected_fingerprint=$(mktemp)
     {
         printf 'base_commit=%s\n' "$(git -C "$SOURCE_BASE" rev-parse HEAD)"
+        printf 'orchestrator=%s\n' "$(sha256sum "$ORCHESTRATOR" | awk '{print $1}')"
         printf 'set_source=%s\n' "$(sha256sum "$source_c" | awk '{print $1}')"
         printf 'suffix=%s\n' "$suffix"
         printf 'packager=%s\n' "$PACKAGER"
+        if [[ $name == d1 ]]; then
+            printf 'set9_decoder=%s\n' "$(sha256sum "$SET9_C" | awk '{print $1}')"
+            printf 'set_rewriter=%s\n' "$(sha256sum "$SET_REWRITER_C" | awk '{print $1}')"
+            printf 'set_compat=%s\n' "$(sha256sum "$SET_COMPAT_H" | awk '{print $1}')"
+        fi
     } >"$expected_fingerprint"
     if [[ -f $variant/input-fingerprint.txt ]]; then
         if ! cmp -s "$expected_fingerprint" "$variant/input-fingerprint.txt"; then
@@ -407,10 +536,24 @@ build_variant()
         git clone --local "$SOURCE_BASE" "$source"
         cp "$source_c" "$source/lib/set.c"
         prepare_spec "$spec" "$suffix"
+        if [[ $name == d1 ]]; then
+            prepare_d1_build_corpus "$source"
+        fi
+        sha256sum "$spec" >"$variant/prepared-spec.sha256"
         cp "$expected_fingerprint" "$variant/input-fingerprint.txt"
     else
+        [[ -f $variant/prepared-spec.sha256 ]] &&
+            sha256sum -c "$variant/prepared-spec.sha256" >/dev/null ||
+            fail "$name prepared RPM spec changed; use RESET_WORK=1"
         cmp -s "$source_c" "$source/lib/set.c" ||
             fail "$source_c changed; use RESET_WORK=1"
+        if [[ $name == d1 ]]; then
+            cmp -s "$SET9_C" "$source/alt/arsv-d1-build/set9.c" &&
+                cmp -s "$SET_REWRITER_C" \
+                    "$source/alt/arsv-d1-build/rewrite_sisyphus_pkglist.c" &&
+                cmp -s "$SET_COMPAT_H" "$source/alt/arsv-d1-build/newset_compat.h" ||
+                fail 'D1 build corpus converter changed; use RESET_WORK=1'
+        fi
     fi
     rm -f "$expected_fingerprint"
 
@@ -529,9 +672,11 @@ write_provenance()
         printf 'cpu=%s\n' "$CPU"
         printf 'rounds=%s\n' "$ROUNDS"
         printf 'operations=%s\n' "$OPERATIONS"
-        sha256sum "$SET9_C" "$D1_C" "$PKGLIST_CONVERTER" \
+        sha256sum "$ORCHESTRATOR" "$SET9_C" "$D1_C" "$PKGLIST_CONVERTER" \
             "$REPO_ROOT/new_version/direct_hash/apt_benchmark/rewrite_sisyphus_pkglist.c" \
             "$REPO_ROOT/scripts/rpmsetcmp/newset_compat.h"
+        cat "$SNAPSHOT/devel-input-fingerprint.txt"
+        write_runtime_fingerprint
         printf 'set9_librpm='; cat "$SET9_VARIANT/librpm-artifact.sha256"
         printf 'd1_librpm='; cat "$D1_VARIANT/librpm-artifact.sha256"
     } >"$RESULT_DIR/provenance.txt"
