@@ -25,7 +25,7 @@ PACKAGER=${PACKAGER:-krosh <gudovdo@my.msu.ru>}
 CPU=${CPU:-0}
 ROUNDS=${ROUNDS:-2}
 RESET_WORK=${RESET_WORK:-1}  # 0 — продолжить подготовку/сборки, 1 — начать заново.
-OPERATIONS=${OPERATIONS:-unmet check autoremove install-rpm-build install-openuds-server install-password-store upgrade dist-upgrade}
+OPERATIONS=${OPERATIONS:-unmet install-rpm-build install-openuds-server install-password-store}
 APT_GET=${APT_GET:-/usr/lib/apt/apt-get}
 APT_CACHE=${APT_CACHE:-$(command -v apt-cache 2>/dev/null || true)}
 
@@ -55,10 +55,73 @@ fail()
 
 safe_remove_work_root()
 {
-    [[ -n $WORK_ROOT && $WORK_ROOT == /* && $WORK_ROOT != / && $WORK_ROOT != "$HOME" ]] ||
+    local marker="$WORK_ROOT/.arsv-sisyphus-set-bench-root"
+
+    [[ -n $WORK_ROOT && $WORK_ROOT == /* && $WORK_ROOT != / &&
+       $WORK_ROOT != "$HOME_REAL" && $HOME_REAL != "$WORK_ROOT/"* ]] ||
         fail "unsafe WORK_ROOT for removal: $WORK_ROOT"
-    [[ $WORK_ROOT != "$REPO_ROOT" && $REPO_ROOT != "$WORK_ROOT/"* ]] ||
-        fail "WORK_ROOT must not contain the source repository: $WORK_ROOT"
+    [[ $WORK_ROOT != "$REPO_ROOT" && $REPO_ROOT != "$WORK_ROOT/"* &&
+       $WORK_ROOT != "$REPO_ROOT/"* && $WORK_ROOT != "$CWD_REAL" &&
+       $CWD_REAL != "$WORK_ROOT/"* && $WORK_ROOT != "$CWD_REAL/"* ]] ||
+        fail "WORK_ROOT overlaps the source repository or current directory: $WORK_ROOT"
+    [[ ! -e $WORK_ROOT || (-f $marker && ! -L $marker) ]] ||
+        fail "refusing to remove unmarked WORK_ROOT: $WORK_ROOT"
+    if [[ -f $marker ]]; then
+        grep -Fx 'ARSV Sisyphus set9/D1 benchmark work root' "$marker" >/dev/null ||
+            fail "invalid WORK_ROOT ownership marker: $marker"
+    fi
+}
+
+write_snapshot_fingerprint()
+{
+    {
+        printf 'image=%s\n' "$IMAGE"
+        printf 'image_digest=%s\n' "$(podman image inspect "$IMAGE" --format '{{.Digest}}')"
+        printf 'image_id=%s\n' "$(podman image inspect "$IMAGE" --format '{{.Id}}')"
+        printf 'converter=%s\n' "$(sha256sum "$PKGLIST_CONVERTER" | awk '{print $1}')"
+        printf 'set9=%s\n' "$(sha256sum "$SET9_C" | awk '{print $1}')"
+        printf 'rewrite=%s\n' "$(sha256sum "$REPO_ROOT/new_version/direct_hash/apt_benchmark/rewrite_sisyphus_pkglist.c" | awk '{print $1}')"
+        printf 'compat=%s\n' "$(sha256sum "$REPO_ROOT/scripts/rpmsetcmp/newset_compat.h" | awk '{print $1}')"
+    }
+}
+
+validate_snapshot_reuse()
+{
+    local current
+    [[ -f $SNAPSHOT/.complete && -f $SNAPSHOT/input-fingerprint.txt ]] || return 1
+    current=$(mktemp)
+    write_snapshot_fingerprint >"$current"
+    if ! cmp -s "$current" "$SNAPSHOT/input-fingerprint.txt"; then
+        rm -f "$current"
+        fail 'snapshot inputs changed; use RESET_WORK=1'
+    fi
+    rm -f "$current"
+    return 0
+}
+
+write_source_fingerprint()
+{
+    {
+        printf 'rpm_git=%s\n' "$RPM_GIT"
+        printf 'rpm_branch=%s\n' "$RPM_BRANCH"
+        printf 'rpm_commit=%s\n' "$(git -C "$SOURCE_BASE" rev-parse HEAD)"
+    }
+}
+
+validate_source_reuse()
+{
+    local current
+    [[ -f $SOURCE_FINGERPRINT ]] ||
+        fail 'source fingerprint missing; use RESET_WORK=1'
+    [[ -z $(git -C "$SOURCE_BASE" status --porcelain) ]] ||
+        fail 'RPM base source has local changes; use RESET_WORK=1'
+    current=$(mktemp)
+    write_source_fingerprint >"$current"
+    if ! cmp -s "$current" "$SOURCE_FINGERPRINT"; then
+        rm -f "$current"
+        fail 'RPM source URL, branch, or commit changed; use RESET_WORK=1'
+    fi
+    rm -f "$current"
 }
 
 prepare_spec()
@@ -151,15 +214,19 @@ variant_libdir()
     printf '%s' "$variant/lib/usr/lib64"
 }
 
-run_command()
+prepare_command()
 {
-    local operation=$1 variant_name=$2 stdout=$3 stderr=$4
-    local variant libdir status
+    local operation=$1 variant_name=$2 variant
     variant=$(variant_dir "$variant_name")
-    libdir=$(variant_libdir "$variant_name")
+    RUN_LIBDIR=$(variant_libdir "$variant_name")
     operation_command "$operation" "$variant"
+}
 
-    if env LC_ALL=C APT_CONFIG="$COMMON/apt.conf" LD_LIBRARY_PATH="$libdir" \
+execute_command()
+{
+    local stdout=$1 stderr=$2 status
+
+    if env LC_ALL=C APT_CONFIG="$COMMON/apt.conf" LD_LIBRARY_PATH="$RUN_LIBDIR" \
         taskset -c "$CPU" "${COMMAND[@]}" >"$stdout" 2>"$stderr"; then
         status=0
     else
@@ -179,8 +246,9 @@ run_once()
     stdout="$raw/$sample.stdout"
     stderr="$raw/$sample.stderr"
 
+    prepare_command "$operation" "$variant_name"
     start=$(date +%s%N)
-    status=$(run_command "$operation" "$variant_name" "$stdout" "$stderr")
+    status=$(execute_command "$stdout" "$stderr")
     end=$(date +%s%N)
     elapsed=$(awk -v start="$start" -v end="$end" \
         'BEGIN { printf "%.6f", (end - start) / 1000000000 }')
@@ -199,7 +267,7 @@ run_once()
 prepare_snapshot()
 {
     local image_digest image_id converter_rel
-    [[ -f $SNAPSHOT/.complete ]] && return
+    validate_snapshot_reuse && return
 
     case $PKGLIST_CONVERTER in
         "$REPO_ROOT"/*) converter_rel=${PKGLIST_CONVERTER#"$REPO_ROOT/"} ;;
@@ -242,12 +310,16 @@ prepare_snapshot()
     rm -rf "$SNAPSHOT/lists/partial"
     mkdir -p "$SNAPSHOT/lists/partial" "$SNAPSHOT/etc-apt/sources.list.d"
     [[ -e $SNAPSHOT/etc-apt/sources.list ]] || : >"$SNAPSHOT/etc-apt/sources.list"
+    write_snapshot_fingerprint >"$SNAPSHOT/input-fingerprint.txt"
     : >"$SNAPSHOT/.complete"
 }
 
 prepare_variant_lists()
 {
     local variant=$1 format=$2
+    if [[ -d $variant/apt ]]; then
+        chmod -R u+w "$variant/apt"
+    fi
     rm -rf "$variant/apt"
     mkdir -p "$variant/apt/lists" "$variant/apt/cache/archives/partial"
     cp -a "$SNAPSHOT/lists/." "$variant/apt/lists/"
@@ -279,6 +351,7 @@ PY
 build_variant()
 {
     local name=$1 source_c=$2 suffix=$3 variant source hasher repo spec
+    local expected_fingerprint artifact_fingerprint
     local -a librpm_rpms
     variant=$(variant_dir "$name")
     source="$variant/src/rpm"
@@ -288,16 +361,38 @@ build_variant()
 
     printf '\n===== Building %s with %s =====\n' "$name" "$source_c"
     mkdir -p "$variant/src" "$variant/logs" "$hasher"
+    shopt -s nullglob
+    librpm_rpms=("$repo"/librpm7-[0-9]*".$suffix".x86_64.rpm)
+    expected_fingerprint=$(mktemp)
+    {
+        printf 'base_commit=%s\n' "$(git -C "$SOURCE_BASE" rev-parse HEAD)"
+        printf 'set_source=%s\n' "$(sha256sum "$source_c" | awk '{print $1}')"
+        printf 'suffix=%s\n' "$suffix"
+        printf 'packager=%s\n' "$PACKAGER"
+    } >"$expected_fingerprint"
+    if [[ -f $variant/input-fingerprint.txt ]]; then
+        if ! cmp -s "$expected_fingerprint" "$variant/input-fingerprint.txt"; then
+            rm -f "$expected_fingerprint"
+            fail "$name build inputs changed; use RESET_WORK=1"
+        fi
+    elif ((${#librpm_rpms[@]} > 0)); then
+        rm -f "$expected_fingerprint"
+        fail "$name RPM exists without its input fingerprint; use RESET_WORK=1"
+    fi
+    if ((${#librpm_rpms[@]} == 0)) && [[ -d $source ]]; then
+        rm -rf "$source"
+    fi
     if [[ ! -d $source/.git ]]; then
         git clone --local "$SOURCE_BASE" "$source"
         cp "$source_c" "$source/lib/set.c"
         prepare_spec "$spec" "$suffix"
+        cp "$expected_fingerprint" "$variant/input-fingerprint.txt"
     else
         cmp -s "$source_c" "$source/lib/set.c" ||
             fail "$source_c changed; use RESET_WORK=1"
     fi
+    rm -f "$expected_fingerprint"
 
-    shopt -s nullglob
     librpm_rpms=("$repo"/librpm7-[0-9]*".$suffix".x86_64.rpm)
     if ((${#librpm_rpms[@]} == 0)); then
         (
@@ -318,6 +413,13 @@ build_variant()
     librpm_rpms=("$repo"/librpm7-[0-9]*".$suffix".x86_64.rpm)
     ((${#librpm_rpms[@]} == 1)) ||
         fail "expected one librpm7 package for $name, got ${#librpm_rpms[@]}"
+    artifact_fingerprint=$(sha256sum "${librpm_rpms[0]}")
+    if [[ -f $variant/librpm-artifact.sha256 ]]; then
+        [[ $artifact_fingerprint == "$(<"$variant/librpm-artifact.sha256")" ]] ||
+            fail "$name librpm artifact changed; use RESET_WORK=1"
+    else
+        printf '%s\n' "$artifact_fingerprint" >"$variant/librpm-artifact.sha256"
+    fi
 
     rm -rf "$variant/lib"
     mkdir -p "$variant/lib"
@@ -345,6 +447,7 @@ build_cache()
     stdout="$variant/logs/gencaches.stdout"
     stderr="$variant/logs/gencaches.stderr"
 
+    chmod -R u+w "$variant/apt/cache"
     rm -f "$variant/apt/cache/pkgcache.bin" "$variant/apt/cache/srcpkgcache.bin"
     start=$(date +%s%N)
     if env LC_ALL=C APT_CONFIG="$COMMON/apt.conf" LD_LIBRARY_PATH="$libdir" \
@@ -359,30 +462,37 @@ build_cache()
     printf '%s\t%s\t%s\n' "$name" "$elapsed" "$status" >>"$CACHE_RESULTS"
     [[ $status -eq 0 && -s $variant/apt/cache/pkgcache.bin ]] ||
         fail "gencaches failed for $name; see $stderr"
+    chmod -R a-w "$variant/apt/cache"
 }
 
 record_cache_checksums()
 {
     local name variant
-    : >"$RESULT_DIR/cache-files.before.sha256"
+    : >"$RESULT_DIR/cache-files.before.txt"
     for name in set9 d1; do
         variant=$(variant_dir "$name")
-        sha256sum "$variant/apt/cache/pkgcache.bin" \
-            "$variant/apt/cache/srcpkgcache.bin" >>"$RESULT_DIR/cache-files.before.sha256"
+        for cache_file in "$variant/apt/cache/pkgcache.bin" \
+            "$variant/apt/cache/srcpkgcache.bin"; do
+            stat -c '%n\t%D\t%i\t%s\t%Y\t%A' "$cache_file"
+            sha256sum "$cache_file"
+        done >>"$RESULT_DIR/cache-files.before.txt"
     done
 }
 
 verify_cache_checksums()
 {
     local name variant
-    : >"$RESULT_DIR/cache-files.after.sha256"
+    : >"$RESULT_DIR/cache-files.after.txt"
     for name in set9 d1; do
         variant=$(variant_dir "$name")
-        sha256sum "$variant/apt/cache/pkgcache.bin" \
-            "$variant/apt/cache/srcpkgcache.bin" >>"$RESULT_DIR/cache-files.after.sha256"
+        for cache_file in "$variant/apt/cache/pkgcache.bin" \
+            "$variant/apt/cache/srcpkgcache.bin"; do
+            stat -c '%n\t%D\t%i\t%s\t%Y\t%A' "$cache_file"
+            sha256sum "$cache_file"
+        done >>"$RESULT_DIR/cache-files.after.txt"
     done
-    cmp -s "$RESULT_DIR/cache-files.before.sha256" \
-        "$RESULT_DIR/cache-files.after.sha256" ||
+    cmp -s "$RESULT_DIR/cache-files.before.txt" \
+        "$RESULT_DIR/cache-files.after.txt" ||
         fail "APT cache changed during timed runs"
 }
 
@@ -401,7 +511,10 @@ write_provenance()
         printf 'rounds=%s\n' "$ROUNDS"
         printf 'operations=%s\n' "$OPERATIONS"
         sha256sum "$SET9_C" "$D1_C" "$PKGLIST_CONVERTER" \
-            "$REPO_ROOT/new_version/direct_hash/apt_benchmark/rewrite_sisyphus_pkglist.c"
+            "$REPO_ROOT/new_version/direct_hash/apt_benchmark/rewrite_sisyphus_pkglist.c" \
+            "$REPO_ROOT/scripts/rpmsetcmp/newset_compat.h"
+        printf 'set9_librpm='; cat "$SET9_VARIANT/librpm-artifact.sha256"
+        printf 'd1_librpm='; cat "$D1_VARIANT/librpm-artifact.sha256"
     } >"$RESULT_DIR/provenance.txt"
     cp "$SNAPSHOT/manifest.json" "$RESULT_DIR/pkglist-manifest.json"
 }
@@ -428,8 +541,10 @@ all_equivalent = True
 for operation, items in groups.items():
     by_variant = defaultdict(list)
     signatures = set()
+    statuses = set()
     for item in items:
         by_variant[item["variant"]].append(float(item["seconds"]))
+        statuses.add(item["status"])
         signatures.add(
             (
                 item["status"],
@@ -441,22 +556,47 @@ for operation, items in groups.items():
         )
     if set(by_variant) != {"set9", "d1"}:
         raise SystemExit(f"missing variant samples for {operation}")
+    if len(by_variant["set9"]) != len(by_variant["d1"]):
+        raise SystemExit(f"unbalanced variant samples for {operation}")
     set9 = statistics.median(by_variant["set9"])
     d1 = statistics.median(by_variant["d1"])
     equivalent = len(signatures) == 1
     all_equivalent &= equivalent
+    status = next(iter(statuses)) if len(statuses) == 1 else "mixed:" + ",".join(sorted(statuses))
+    path = "normal" if status == "0" else "failure-path"
     summary.append(
-        (operation, len(by_variant["set9"]), set9, d1, d1 / set9, equivalent)
+        (
+            operation,
+            len(by_variant["set9"]),
+            set9,
+            min(by_variant["set9"]),
+            max(by_variant["set9"]),
+            d1,
+            min(by_variant["d1"]),
+            max(by_variant["d1"]),
+            d1 / set9,
+            status,
+            path,
+            equivalent,
+        )
     )
 
 with tsv_path.open("w", newline="") as stream:
     writer = csv.writer(stream, delimiter="\t", lineterminator="\n")
     writer.writerow(
-        ["operation", "runs_per_variant", "set9_median_seconds", "d1_median_seconds", "d1/set9", "outputs_equal"]
+        [
+            "operation", "runs_per_variant", "set9_median_seconds", "set9_min_seconds",
+            "set9_max_seconds", "d1_median_seconds", "d1_min_seconds", "d1_max_seconds",
+            "d1/set9", "exit_status", "benchmark_path", "outputs_equal"
+        ]
     )
-    for operation, count, set9, d1, ratio, equivalent in summary:
+    for operation, count, set9, set9_min, set9_max, d1, d1_min, d1_max, ratio, status, path, equivalent in summary:
         writer.writerow(
-            [operation, count, f"{set9:.6f}", f"{d1:.6f}", f"{ratio:.4f}", "yes" if equivalent else "NO"]
+            [
+                operation, count, f"{set9:.6f}", f"{set9_min:.6f}", f"{set9_max:.6f}",
+                f"{d1:.6f}", f"{d1_min:.6f}", f"{d1_max:.6f}", f"{ratio:.4f}",
+                status, path, "yes" if equivalent else "NO"
+            ]
         )
 
 lines = [
@@ -465,17 +605,20 @@ lines = [
     "Timed scope: resolver commands only; conversion, builds and `gencaches` are excluded.",
     "Each round uses the balanced order `set9 / d1 / d1 / set9` after one warm-up per variant.",
     "",
-    "| operation | runs/variant | set9 median, s | D1 median, s | D1/set9 | output equivalence |",
-    "|---|---:|---:|---:|---:|:---:|",
+    "| operation | runs/variant | set9 median [min–max], s | D1 median [min–max], s | D1/set9 | status/path | output equivalence |",
+    "|---|---:|---:|---:|---:|:---:|:---:|",
 ]
-for operation, count, set9, d1, ratio, equivalent in summary:
+for operation, count, set9, set9_min, set9_max, d1, d1_min, d1_max, ratio, status, path, equivalent in summary:
     lines.append(
-        f"| `{operation}` | {count} | {set9:.6f} | {d1:.6f} | {ratio:.4f} | {'yes' if equivalent else '**NO**'} |"
+        f"| `{operation}` | {count} | {set9:.6f} [{set9_min:.6f}–{set9_max:.6f}] | "
+        f"{d1:.6f} [{d1_min:.6f}–{d1_max:.6f}] | {ratio:.4f} | "
+        f"{status}/{path} | {'yes' if equivalent else '**NO**'} |"
     )
 lines.extend(
     [
         "",
         "`D1/set9 < 1` means that the D1 variant was faster.",
+        "Rows with non-zero status are explicitly labelled `failure-path`; do not treat them as successful resolver workloads.",
         "Output equivalence includes exit status plus exact stdout and stderr hashes for every repeat and both variants.",
     ]
 )
@@ -492,7 +635,7 @@ fi
 (($# == 0)) || fail "unexpected arguments; use --help"
 
 for command in git podman gear-hsh hsh rpm rpmquery rpm2cpio cpio taskset awk sed \
-    date sha256sum stat ldd python3 cmp cp mv tee; do
+    date sha256sum stat ldd python3 cmp cp mv tee realpath mktemp grep; do
     command -v "$command" >/dev/null || fail "required command not found: $command"
 done
 [[ -n $APT_CACHE && -x $APT_CACHE ]] || fail "apt-cache not found: $APT_CACHE"
@@ -511,27 +654,60 @@ for operation in "${OPERATION_LIST[@]}"; do
     esac
 done
 
+HOME_REAL=$(realpath -m "$HOME")
+CWD_REAL=$(realpath -m "$PWD")
+REPO_ROOT=$(realpath -m "$REPO_ROOT")
+WORK_ROOT=$(realpath -m "$WORK_ROOT")
+RESULT_DIR=$(realpath -m "$RESULT_DIR")
+[[ $RESULT_DIR == "$WORK_ROOT"/* ]] ||
+    fail "RESULT_DIR must be inside WORK_ROOT: $RESULT_DIR"
+
 COMMON="$WORK_ROOT/common"
 SNAPSHOT="$COMMON/snapshot"
 SOURCE_BASE="$WORK_ROOT/src/rpm-base"
+SOURCE_FINGERPRINT="$WORK_ROOT/src/rpm-base.fingerprint.txt"
 SET9_VARIANT="$WORK_ROOT/variants/set9"
 D1_VARIANT="$WORK_ROOT/variants/d1"
 
+WORK_ROOT_EXISTED=0
+[[ -e $WORK_ROOT ]] && WORK_ROOT_EXISTED=1
 if ((RESET_WORK)); then
     safe_remove_work_root
     for old_hasher in "$SET9_VARIANT/hasher" "$D1_VARIANT/hasher"; do
         [[ -d $old_hasher ]] || continue
-        hsh --cleanup-only --workdir="$old_hasher" >/dev/null 2>&1 || true
+        hsh --cleanup-only --workdir="$old_hasher" ||
+            fail "hasher cleanup failed: $old_hasher"
+    done
+    for old_apt in "$SET9_VARIANT/apt" "$D1_VARIANT/apt"; do
+        [[ -d $old_apt ]] || continue
+        chmod -R u+w "$old_apt"
     done
     rm -rf "$WORK_ROOT"
+    WORK_ROOT_EXISTED=0
+elif ((WORK_ROOT_EXISTED)); then
+    marker="$WORK_ROOT/.arsv-sisyphus-set-bench-root"
+    [[ -f $marker && ! -L $marker ]] ||
+        fail "refusing unmarked existing WORK_ROOT: $WORK_ROOT"
+    grep -Fx 'ARSV Sisyphus set9/D1 benchmark work root' "$marker" >/dev/null ||
+        fail "invalid WORK_ROOT ownership marker: $marker"
 fi
 mkdir -p "$WORK_ROOT/src" "$WORK_ROOT/variants" "$COMMON/root/var/lib/rpm" "$RESULT_DIR"
+MARKER="$WORK_ROOT/.arsv-sisyphus-set-bench-root"
+if [[ -e $MARKER ]]; then
+    grep -Fx 'ARSV Sisyphus set9/D1 benchmark work root' "$MARKER" >/dev/null ||
+        fail "invalid WORK_ROOT ownership marker: $MARKER"
+else
+    printf '%s\n' 'ARSV Sisyphus set9/D1 benchmark work root' >"$MARKER"
+fi
 : >"$COMMON/apt.conf"
 : >"$COMMON/status"
 
 prepare_snapshot
 if [[ ! -d $SOURCE_BASE/.git ]]; then
     git clone --branch "$RPM_BRANCH" --single-branch "$RPM_GIT" "$SOURCE_BASE"
+    write_source_fingerprint >"$SOURCE_FINGERPRINT"
+else
+    validate_source_reuse
 fi
 
 build_variant set9 "$SET9_C" arsvset9
@@ -556,7 +732,8 @@ for operation in "${OPERATION_LIST[@]}"; do
     printf '\n===== Warm-up: %s =====\n' "$operation"
     mkdir -p "$RESULT_DIR/warmup/$operation"
     for variant_name in set9 d1; do
-        warm_status=$(run_command "$operation" "$variant_name" \
+        prepare_command "$operation" "$variant_name"
+        warm_status=$(execute_command \
             "$RESULT_DIR/warmup/$operation/$variant_name.stdout" \
             "$RESULT_DIR/warmup/$operation/$variant_name.stderr")
         printf '%s\n' "$warm_status" >"$RESULT_DIR/warmup/$operation/$variant_name.status"
