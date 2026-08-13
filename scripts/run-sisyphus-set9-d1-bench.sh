@@ -18,8 +18,7 @@ PKGLIST_CONVERTER=${PKGLIST_CONVERTER:-$REPO_ROOT/new_version/direct_hash/apt_be
 
 WORK_ROOT=${WORK_ROOT:-$HOME/sisyphus-set9-d1-bench}
 RESULT_DIR=${RESULT_DIR:-$WORK_ROOT/results}
-APT_LISTS_SOURCE=${APT_LISTS_SOURCE:-/var/lib/apt/lists}
-APT_ETC_SOURCE=${APT_ETC_SOURCE:-/etc/apt}
+SISYPHUS_MIRROR=${SISYPHUS_MIRROR:-https://ftp.altlinux.org/pub/distributions/ALTLinux}
 RPM_GIT=${RPM_GIT:-https://git.altlinux.org/gears/r/rpm.git}
 RPM_BRANCH=${RPM_BRANCH:-sisyphus}
 PACKAGER=${PACKAGER:-krosh <gudovdo@my.msu.ru>}
@@ -40,14 +39,13 @@ The script has no positional arguments. Configuration is passed through env:
   RESET_WORK=0 OPERATIONS='unmet check' ./scripts/run-sisyphus-set9-d1-bench.sh
 
 Main variables:
-  WORK_ROOT, RESULT_DIR, APT_LISTS_SOURCE, APT_ETC_SOURCE,
-  RPM_GIT, RPM_BRANCH, PACKAGER,
+  WORK_ROOT, RESULT_DIR, SISYPHUS_MIRROR, RPM_GIT, RPM_BRANCH, PACKAGER,
   SET9_C, D1_C, PKGLIST_CONVERTER, CPU, ROUNDS, RESET_WORK, OPERATIONS.
 
 RESET_WORK=1 removes WORK_ROOT after running hsh --cleanup-only for old hasher
 workdirs. Timed runs never update repositories and never install packages.
-Run apt-get update on the Sisyphus host before RESET_WORK=1; the script snapshots
-the existing local APT lists and performs no metadata download itself.
+Snapshot preparation downloads x86_64 and noarch metadata from SISYPHUS_MIRROR
+into an isolated APT directory under WORK_ROOT; host APT configuration is untouched.
 EOF
 }
 
@@ -100,8 +98,7 @@ ensure_work_subdir()
 write_snapshot_fingerprint()
 {
     {
-        printf 'apt_lists_source=%s\n' "$APT_LISTS_SOURCE"
-        printf 'apt_etc_source=%s\n' "$APT_ETC_SOURCE"
+        printf 'sisyphus_mirror=%s\n' "$SISYPHUS_MIRROR"
         printf 'converter=%s\n' "$(sha256sum "$PKGLIST_CONVERTER" | awk '{print $1}')"
         printf 'set9=%s\n' "$(sha256sum "$SET9_C" | awk '{print $1}')"
         printf 'rewrite=%s\n' "$(sha256sum "$REPO_ROOT/new_version/direct_hash/apt_benchmark/rewrite_sisyphus_pkglist.c" | awk '{print $1}')"
@@ -291,39 +288,36 @@ run_once()
 prepare_snapshot()
 {
     local converter_output
+    local -a update_options
     validate_snapshot_reuse && return
 
-    printf '\n===== Preparing one immutable local Sisyphus metadata snapshot =====\n'
+    printf '\n===== Preparing one immutable Sisyphus metadata snapshot =====\n'
     rm -rf "$SNAPSHOT"
-    mkdir -p "$SNAPSHOT/lists" "$SNAPSHOT/etc-apt/sources.list.d"
-    python3 - "$APT_LISTS_SOURCE" "$SNAPSHOT/lists" <<'PY'
-import shutil
-import sys
-from pathlib import Path
+    mkdir -p "$SNAPSHOT/lists/partial" \
+        "$SNAPSHOT/etc-apt/sources.list.d" \
+        "$SNAPSHOT/download-cache/archives/partial"
+    printf '%s\n' \
+        "rpm [alt] $SISYPHUS_MIRROR Sisyphus/x86_64 classic" \
+        "rpm [alt] $SISYPHUS_MIRROR Sisyphus/noarch classic" \
+        >"$SNAPSHOT/etc-apt/sources.list"
 
-source, target = map(Path, sys.argv[1:])
-for entry in source.iterdir():
-    if entry.name in {"lock", "partial"}:
-        continue
-    destination = target / entry.name
-    if entry.is_symlink():
-        raise SystemExit(f"refusing symlink in APT lists: {entry}")
-    if entry.is_file():
-        shutil.copy2(entry, destination)
-    elif entry.is_dir():
-        shutil.copytree(entry, destination)
-    else:
-        raise SystemExit(f"unsupported entry in APT lists: {entry}")
-PY
-    if [[ -f $APT_ETC_SOURCE/sources.list ]]; then
-        cp -L "$APT_ETC_SOURCE/sources.list" "$SNAPSHOT/etc-apt/sources.list"
-    else
-        : >"$SNAPSHOT/etc-apt/sources.list"
-    fi
-    if [[ -d $APT_ETC_SOURCE/sources.list.d ]]; then
-        cp -LR "$APT_ETC_SOURCE/sources.list.d/." "$SNAPSHOT/etc-apt/sources.list.d/"
-    fi
-    mkdir -p "$SNAPSHOT/lists/partial"
+    update_options=(
+        -o 'Dir::Etc::main=-'
+        -o 'Dir::Etc::parts=-'
+        -o "Dir::Etc::sourcelist=$SNAPSHOT/etc-apt/sources.list"
+        -o "Dir::Etc::sourceparts=$SNAPSHOT/etc-apt/sources.list.d"
+        -o 'Dir::Etc::preferences=-'
+        -o 'Dir::Etc::preferencesparts=-'
+        -o "Dir::State::lists=$SNAPSHOT/lists"
+        -o "Dir::State::status=$COMMON/status"
+        -o "Dir::Cache=$SNAPSHOT/download-cache"
+        -o "Dir::Cache::archives=$SNAPSHOT/download-cache/archives"
+        -o "Dir::Cache::pkgcache=$SNAPSHOT/download-cache/pkgcache.bin"
+        -o "Dir::Cache::srcpkgcache=$SNAPSHOT/download-cache/srcpkgcache.bin"
+        -o "RPM::RootDir=$COMMON/root"
+    )
+    APT_CONFIG="$COMMON/apt.conf" "$APT_GET" -qq \
+        "${update_options[@]}" update
 
     converter_output="$SNAPSHOT/conversion"
     python3 "$PKGLIST_CONVERTER" "$converter_output" \
@@ -332,6 +326,10 @@ PY
     mkdir -p "$SNAPSHOT/d1-pkglists"
     mv "$converter_output/d1-pkglists/"*.classic "$SNAPSHOT/d1-pkglists/"
     rmdir "$converter_output/d1-pkglists" "$converter_output"
+    rm -rf "$SNAPSHOT/download-cache"
+    rm -f "$SNAPSHOT/lists/lock"
+    rm -rf "$SNAPSHOT/lists/partial"
+    mkdir -p "$SNAPSHOT/lists/partial"
     write_snapshot_fingerprint >"$SNAPSHOT/input-fingerprint.txt"
     : >"$SNAPSHOT/.complete"
 }
@@ -525,8 +523,7 @@ write_provenance()
         printf 'rpm_git=%s\n' "$RPM_GIT"
         printf 'rpm_branch=%s\n' "$RPM_BRANCH"
         printf 'rpm_commit=%s\n' "$(git -C "$SOURCE_BASE" rev-parse HEAD)"
-        printf 'apt_lists_source=%s\n' "$APT_LISTS_SOURCE"
-        printf 'apt_etc_source=%s\n' "$APT_ETC_SOURCE"
+        printf 'sisyphus_mirror=%s\n' "$SISYPHUS_MIRROR"
         printf 'apt=%s\n' "$(rpmquery --qf '%{VERSION}-%{RELEASE}' apt)"
         printf 'rpm=%s\n' "$(rpm --version)"
         printf 'cpu=%s\n' "$CPU"
@@ -683,12 +680,8 @@ REPO_ROOT=$(realpath -m "$REPO_ROOT")
 SET9_C=$(realpath -m "$SET9_C")
 D1_C=$(realpath -m "$D1_C")
 PKGLIST_CONVERTER=$(realpath -m "$PKGLIST_CONVERTER")
-APT_LISTS_SOURCE=$(realpath -m "$APT_LISTS_SOURCE")
-APT_ETC_SOURCE=$(realpath -m "$APT_ETC_SOURCE")
 WORK_ROOT=$(realpath -m "$WORK_ROOT")
 RESULT_DIR=$(realpath -m "$RESULT_DIR")
-[[ -d $APT_LISTS_SOURCE ]] || fail "APT lists directory not found: $APT_LISTS_SOURCE"
-[[ -d $APT_ETC_SOURCE ]] || fail "APT configuration directory not found: $APT_ETC_SOURCE"
 [[ $RESULT_DIR == "$WORK_ROOT"/* ]] ||
     fail "RESULT_DIR must be inside WORK_ROOT: $RESULT_DIR"
 
