@@ -33,6 +33,7 @@ DEFAULT_OUTPUT_DIR = ROOT / "probability_maps"
 # Add directory names from hash_funcs here to include more implementations.
 HASHES = [
     "jenkinsOAAT",
+    "xxh64",
 ]
 
 HEX_HASH = re.compile(r"(?:0[xX])?([0-9a-fA-F]+)")
@@ -84,9 +85,7 @@ def prepare_hash(hash_name: str, hash_funcs_dir: Path = HASH_FUNCS_DIR) -> Path:
         result = subprocess.run(command, text=True, capture_output=True)
         if result.returncode != 0:
             details = result.stderr.strip() or result.stdout.strip()
-            raise HashToolError(
-                f"не удалось скомпилировать {source}: {details}"
-            )
+            raise HashToolError(f"не удалось скомпилировать {source}: {details}")
         return binary
 
     python_source = hash_directory / "bin_hash.py"
@@ -98,10 +97,7 @@ def prepare_hash(hash_name: str, hash_funcs_dir: Path = HASH_FUNCS_DIR) -> Path:
                 encoding="utf-8",
             )
         python_source.chmod(
-            python_source.stat().st_mode
-            | stat.S_IXUSR
-            | stat.S_IXGRP
-            | stat.S_IXOTH
+            python_source.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
         )
         return python_source
 
@@ -131,9 +127,7 @@ def run_hash(executable: Path, word: str) -> tuple[int, int]:
     output = result.stdout.strip()
     match = HEX_HASH.fullmatch(output)
     if match is None:
-        raise HashToolError(
-            f"{executable} вернул не шестнадцатеричный хэш: {output!r}"
-        )
+        raise HashToolError(f"{executable} вернул не шестнадцатеричный хэш: {output!r}")
 
     digits = match.group(1)
     return int(digits, 16), len(digits) * 4
@@ -169,9 +163,7 @@ def write_csv_table(stream: TextIO, rows: Mapping[str, ProbabilityRow]) -> None:
     bits = widths.pop()
 
     writer = csv.writer(stream, lineterminator="\n")
-    writer.writerow(
-        ["operation", "pairs", *(f"bit_{bit}" for bit in range(bits))]
-    )
+    writer.writerow(["operation", "pairs", *(f"bit_{bit}" for bit in range(bits))])
     for operation, (pair_count, probabilities) in rows.items():
         writer.writerow(
             [
@@ -306,10 +298,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
-        help=(
-            "каталог для CSV-таблиц "
-            f"(по умолчанию: {DEFAULT_OUTPUT_DIR})"
-        ),
+        help=("каталог для CSV-таблиц " f"(по умолчанию: {DEFAULT_OUTPUT_DIR})"),
     )
     parser.add_argument(
         "--hash",
