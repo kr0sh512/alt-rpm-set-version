@@ -34,6 +34,7 @@ DEFAULT_OUTPUT_DIR = ROOT / "probability_maps"
 HASHES = [
     "jenkinsOAAT",
     "xxh64",
+    "t1ha2",
 ]
 
 HEX_HASH = re.compile(r"(?:0[xX])?([0-9a-fA-F]+)")
