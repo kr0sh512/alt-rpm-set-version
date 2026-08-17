@@ -1,0 +1,8 @@
+corpus=input_symbols/cpp_provides_p11.txt
+corpus_bytes=54941449
+corpus_sha256=bf8e760bdf4d52b42040cff4625de73988d8dd6b517566efd186c71e3382753d
+samples=577509
+hashes=jenkinsOAAT,xxh64,t1ha2
+metric=P(hash_output_bit=1)
+bit_order=bit_0_is_LSB
+input_format=one_ASCII_symbol_per_line

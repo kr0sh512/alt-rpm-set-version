@@ -1,0 +1,22 @@
+branch=p11
+arch=x86_64
+filter=Itanium C++ ABI mangled names beginning with _Z
+extractor=/usr/lib/rpm/provided_symbols
+selection=largest x86_64 C++ candidates found by Provides set-string length in apt-cache dumpavail
+candidate=slicer set_length=509743
+candidate=libmlir22.1 set_length=303303
+candidate=libmlir21.1 set_length=284616
+candidate=libmlir18.1 set_length=204305
+candidate=libmlir20.1 set_length=182470
+
+package=slicer (slicer-5.10.0-alt1.x86_64.rpm) elf_files=227 symbols=380667 selected=380530
+package=libmlir22.1 (libmlir22.1-22.1.1-alt0.1.x86_64.rpm) elf_files=9 symbols=146036 selected=145767
+package=libmlir21.1 (libmlir21.1-21.1.5-alt0.1.x86_64.rpm) elf_files=8 symbols=136102 selected=135854
+package=libmlir20.1 (libmlir20.1-20.1.8-alt0.4.x86_64.rpm) elf_files=8 symbols=90904 selected=90656
+package=libmlir18.1 (libmlir18.1-18.1.8-alt0.2.x86_64.rpm) elf_files=7 symbols=103099 selected=102835
+packages=5 elf_files=259 unique_symbols=577509 output=cpp_provides_p11.txt
+similar_lcp12=575206 share=0.996012
+similar_lcp24=548917 share=0.950491
+median_max_lcp=61
+max_lcp=1018
+sha256=bf8e760bdf4d52b42040cff4625de73988d8dd6b517566efd186c71e3382753d
