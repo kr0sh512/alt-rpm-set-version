@@ -47,6 +47,12 @@ struct decoded_set {
 enum {
   DECODED_CACHE_SIZE = 512,
   DECODED_CACHE_BUCKETS = 1024,
+  PAIR_CACHE_SIZE = 16,
+};
+
+struct pair_cache_entry {
+  uint64_t other_identity;
+  int result;
 };
 
 struct decoded_cache_entry {
@@ -57,9 +63,12 @@ struct decoded_cache_entry {
   unsigned* hashes;
   size_t len;
   size_t count;
+  uint64_t identity;
   uint32_t fingerprint;
   unsigned bucket;
   unsigned target_bpp;
+  unsigned pair_next;
+  struct pair_cache_entry pairs[PAIR_CACHE_SIZE];
 };
 
 struct set_meta {
@@ -72,6 +81,7 @@ static unsigned decoded_cache_count[2];
 static struct decoded_cache_entry* decoded_cache_buckets[2][DECODED_CACHE_BUCKETS];
 static struct decoded_cache_entry* decoded_cache_newest[2];
 static struct decoded_cache_entry* decoded_cache_oldest[2];
+static uint64_t decoded_cache_next_identity = 1;
 
 static unsigned hash(const char* str);
 
@@ -787,8 +797,28 @@ static void decoded_cache_remove(struct decoded_cache_entry* victim, unsigned ca
   _free(victim);
 }
 
+static int pair_cache_lookup(const struct decoded_cache_entry* first,
+                             const struct decoded_cache_entry* second, int* result) {
+  for (unsigned i = 0; i < PAIR_CACHE_SIZE; ++i) {
+    if (first->pairs[i].other_identity == second->identity) {
+      *result = first->pairs[i].result;
+      return 1;
+    }
+  }
+
+  return 0;
+}
+
+static void pair_cache_store(struct decoded_cache_entry* first,
+                             const struct decoded_cache_entry* second, int result) {
+  unsigned slot = first->pair_next++ & (PAIR_CACHE_SIZE - 1);
+  first->pairs[slot].other_identity = second->identity;
+  first->pairs[slot].result = result;
+}
+
 static int cache_decode_set(const struct set_meta* meta, unsigned target_bpp, unsigned cache_id,
-                            const unsigned** hashes, size_t* count) {
+                            const unsigned** hashes, size_t* count,
+                            struct decoded_cache_entry** cache_entry) {
   assert(cache_id < 2);
   assert(target_bpp <= meta->bpp);
 
@@ -803,6 +833,7 @@ static int cache_decode_set(const struct set_meta* meta, unsigned target_bpp, un
     decoded_cache_touch(entry, cache_id);
     *hashes = entry->hashes;
     *count = entry->count;
+    *cache_entry = entry;
     return 0;
   }
 
@@ -825,6 +856,8 @@ static int cache_decode_set(const struct set_meta* meta, unsigned target_bpp, un
   entry->hashes = decoded.hashes;
   entry->len = meta->len;
   entry->count = decoded.count;
+  entry->identity = decoded_cache_next_identity++;
+  if (entry->identity == 0) entry->identity = decoded_cache_next_identity++;
   entry->fingerprint = fingerprint;
   entry->bucket = bucket;
   entry->target_bpp = target_bpp;
@@ -846,6 +879,7 @@ static int cache_decode_set(const struct set_meta* meta, unsigned target_bpp, un
 
   *hashes = entry->hashes;
   *count = entry->count;
+  *cache_entry = entry;
   return 0;
 }
 
@@ -909,18 +943,26 @@ int rpmsetcmp(const char* str1, const char* str2) {
 
   const unsigned* hashes1;
   size_t count1;
-  if (cache_decode_set(&meta1, target_bpp, 0, &hashes1, &count1) < 0) return -3;
+  struct decoded_cache_entry* entry1;
+  if (cache_decode_set(&meta1, target_bpp, 0, &hashes1, &count1, &entry1) < 0) return -3;
 
   if (meta1.len == meta2.len && memcmp(meta1.str, meta2.str, meta1.len + 1) == 0) return 0;
 
   const unsigned* hashes2;
   size_t count2;
-  if (cache_decode_set(&meta2, target_bpp, 1, &hashes2, &count2) < 0) return -4;
+  struct decoded_cache_entry* entry2;
+  if (cache_decode_set(&meta2, target_bpp, 1, &hashes2, &count2, &entry2) < 0) return -4;
+
+  int result;
+  if (pair_cache_lookup(entry1, entry2, &result)) return result;
 
   if (count1 == count2)
-    return memcmp(hashes1, hashes2, count1 * sizeof(*hashes1)) == 0 ? 0 : -2;
+    result = memcmp(hashes1, hashes2, count1 * sizeof(*hashes1)) == 0 ? 0 : -2;
   else if (count1 > count2)
-    return sorted_subset(hashes2, count2, hashes1, count1) ? 1 : -2;
+    result = sorted_subset(hashes2, count2, hashes1, count1) ? 1 : -2;
   else
-    return sorted_subset(hashes1, count1, hashes2, count2) ? -1 : -2;
+    result = sorted_subset(hashes1, count1, hashes2, count2) ? -1 : -2;
+
+  pair_cache_store(entry1, entry2, result);
+  return result;
 }
